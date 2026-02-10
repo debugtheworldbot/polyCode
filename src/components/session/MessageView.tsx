@@ -46,6 +46,10 @@ function splitMessageContent(content: string): ContentSegment[] {
   return segments;
 }
 
+function hasImagePlaceholder(content: string): boolean {
+  return content.split('\n').some((line) => /^\[Image:\s*(.+?)\]\s*$/.test(line));
+}
+
 function LocalImage({ path, alt }: { path: string; alt?: string }) {
   const [resolvedSrc, setResolvedSrc] = useState(convertFileSrc(path));
   const [fallbackTried, setFallbackTried] = useState(false);
@@ -69,11 +73,17 @@ function LocalImage({ path, alt }: { path: string; alt?: string }) {
   return <img src={resolvedSrc} alt={alt || getFileName(path)} onError={handleError} />;
 }
 
-function MessageContent({ content }: { content: string }) {
+function MessageContent({ content, imagesFirst = false }: { content: string; imagesFirst?: boolean }) {
   const segments = splitMessageContent(content);
+  const orderedSegments = imagesFirst
+    ? [
+        ...segments.filter((segment) => segment.type === 'image'),
+        ...segments.filter((segment) => segment.type === 'text'),
+      ]
+    : segments;
   return (
     <>
-      {segments.map((segment, index) => {
+      {orderedSegments.map((segment, index) => {
         if (segment.type === 'image') {
           return <LocalImage key={`img-${index}-${segment.value}`} path={segment.value} />;
         }
@@ -91,6 +101,7 @@ function MessageContent({ content }: { content: string }) {
 function MessageBubble({ message, provider }: { message: ChatMessage; provider?: string }) {
   const roleClass = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
   const isTool = message.message_type === 'tool';
+  const hasImage = hasImagePlaceholder(message.content);
 
   if (isTool) {
     return (
@@ -101,9 +112,12 @@ function MessageBubble({ message, provider }: { message: ChatMessage; provider?:
   }
 
   return (
-    <div className={`message-bubble ${roleClass} animate-fadeIn`} style={{ animationDelay: '0.1s' }}>
+    <div
+      className={`message-bubble ${roleClass} ${roleClass === 'user' && hasImage ? 'with-image' : ''} animate-fadeIn`}
+      style={{ animationDelay: '0.1s' }}
+    >
       <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-        <MessageContent content={message.content} />
+        <MessageContent content={message.content} imagesFirst={roleClass === 'user'} />
       </div>
     </div>
   );
@@ -187,11 +201,11 @@ export function MessageView() {
       {queuedItems.map((content, index) => (
         <div
           key={`queued-${index}-${content}`}
-          className="message-bubble user queued animate-fadeIn"
+          className={`message-bubble user queued ${hasImagePlaceholder(content) ? 'with-image' : ''} animate-fadeIn`}
           style={{ animationDelay: `${0.06 * (index + 1)}s` }}
         >
           <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-            <MessageContent content={content} />
+            <MessageContent content={content} imagesFirst />
           </div>
           <span className="queued-tag">queued</span>
         </div>

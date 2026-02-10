@@ -1,7 +1,7 @@
 const translations: Record<string, Record<string, string>> = {
   en: {
     // App
-    'app.title': 'CodexHub',
+    'app.title': 'polyCode',
     'app.subtitle': 'AI Coding Assistant Hub',
 
     // Sidebar
@@ -73,7 +73,7 @@ const translations: Record<string, Record<string, string>> = {
   },
   zh: {
     // App
-    'app.title': 'CodexHub',
+    'app.title': 'polyCode',
     'app.subtitle': 'AI 编程助手中心',
 
     // Sidebar

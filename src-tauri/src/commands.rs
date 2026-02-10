@@ -954,7 +954,7 @@ pub async fn save_pasted_image(data_url: String, app: AppHandle) -> Result<Strin
     let dir = app
         .path()
         .app_cache_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("codex-hub-cache"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("polycode-cache"))
         .join("images");
     tokio::fs::create_dir_all(&dir)
         .await

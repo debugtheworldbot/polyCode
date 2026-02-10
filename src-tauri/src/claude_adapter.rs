@@ -171,7 +171,7 @@ pub struct ClaudeSessionInfo {
 }
 
 /// Convert a project path to the Claude Code projects directory hash.
-/// `/Users/tian/Developer/codex-hub` → `-Users-tian-Developer-codex-hub`
+/// `/Users/tian/Developer/polycode` → `-Users-tian-Developer-polycode`
 fn project_path_to_hash(project_path: &str) -> String {
     project_path.replace('/', "-").replace('\\', "-")
 }

@@ -5,7 +5,7 @@ use crate::types::{AppData, ChatMessage, MessageRole, MessageType};
 
 fn data_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("codex-hub")
+    base.join("polycode")
 }
 
 fn data_file() -> PathBuf {

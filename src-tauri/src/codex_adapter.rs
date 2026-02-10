@@ -111,8 +111,8 @@ pub async fn spawn_codex_session(
         "initialize",
         json!({
             "clientInfo": {
-                "name": "codex_hub",
-                "title": "CodexHub",
+                "name": "polycode",
+                "title": "polyCode",
                 "version": "0.1.0"
             },
             "capabilities": {
@@ -536,8 +536,8 @@ async fn run_codex_request(
         "initialize",
         json!({
             "clientInfo": {
-                "name": "codex_hub",
-                "title": "CodexHub",
+                "name": "polycode",
+                "title": "polyCode",
                 "version": "0.1.0"
             }
         }),

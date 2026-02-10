@@ -1,9 +1,8 @@
-import { Folder, MessageSquare, Settings, Plus, LayoutGrid, Clock } from 'lucide-react';
+import { useRef, useCallback } from 'react';
+import { Settings, Plus } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../../store';
-import { t } from '../../i18n';
-import { ProjectList } from './ProjectList';
-import { SessionList } from './SessionList';
+import { ProjectTree } from './ProjectTree';
 
 function handleDrag(e: React.MouseEvent) {
   if (e.button !== 0) return;
@@ -14,23 +13,51 @@ function handleDrag(e: React.MouseEvent) {
 
 export function Sidebar() {
   const {
-    activeProjectId,
     sidebarCollapsed,
-    toggleSidebar,
+    sidebarWidth,
+    setSidebarWidth,
     setShowSettings,
     setShowNewProjectDialog,
   } = useAppStore();
 
-  if (sidebarCollapsed) return null; // Or render a tiny strip if preferred
+  const resizing = useRef(false);
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizing.current = true;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!resizing.current) return;
+      const newWidth = startWidth + (ev.clientX - startX);
+      setSidebarWidth(newWidth);
+    };
+
+    const onUp = () => {
+      resizing.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [sidebarWidth, setSidebarWidth]);
+
+  if (sidebarCollapsed) return null;
 
   return (
-    <div className="sidebar">
+    <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       {/* Drag region for macOS traffic lights area */}
       <div className="sidebar-drag-region" onMouseDown={handleDrag} />
       {/* Sidebar Header */}
       <div style={{ padding: '0 12px 16px' }}>
-        <button 
-          className="sidebar-item" 
+        <button
+          className="sidebar-item"
           onClick={() => setShowNewProjectDialog(true)}
           style={{ width: '100%', justifyContent: 'flex-start', fontWeight: 600 }}
         >
@@ -39,19 +66,10 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* Projects Section */}
-      <div className="sidebar-section">
-        <div className="sidebar-section-title">Projects</div>
-        <ProjectList />
+      {/* Tree Section */}
+      <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
+        <ProjectTree />
       </div>
-
-      {/* Threads Section */}
-      {activeProjectId && (
-        <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto', marginTop: '8px' }}>
-           <div className="sidebar-section-title">Threads</div>
-          <SessionList />
-        </div>
-      )}
 
       {/* Footer / Settings */}
       <div className="sidebar-footer">
@@ -64,6 +82,9 @@ export function Sidebar() {
           <span>Settings</span>
         </button>
       </div>
+
+      {/* Resize handle */}
+      <div className="sidebar-resize-handle" onMouseDown={onResizeStart} />
     </div>
   );
 }

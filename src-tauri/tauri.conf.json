@@ -1,8 +1,9 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "CodexHub",
+  "productName": "polyCode",
+  "mainBinaryName": "polyCode",
   "version": "0.1.0",
-  "identifier": "com.codexhub.app",
+  "identifier": "com.polycode.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +14,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "CodexHub",
+        "title": "polyCode",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "transparent": true,
@@ -45,6 +46,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "bundleName": "polyCode"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

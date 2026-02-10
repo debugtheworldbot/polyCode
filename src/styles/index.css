@@ -85,15 +85,14 @@ body {
 
 /* ─── Sidebar (macOS Finder Style) ─── */
 .sidebar {
-  width: var(--sidebar-width);
-  min-width: var(--sidebar-width);
+  position: relative;
   background: var(--color-sidebar-bg);
   backdrop-filter: blur(40px) saturate(1.8);
   -webkit-backdrop-filter: blur(40px) saturate(1.8);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease;
+  flex-shrink: 0;
 }
 
 .sidebar-drag-region {
@@ -187,10 +186,10 @@ body {
 }
 
 .session-refresh-icon.spinning {
-  animation: codexhub-spin 1s linear infinite;
+  animation: polycode-spin 1s linear infinite;
 }
 
-@keyframes codexhub-spin {
+@keyframes polycode-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
@@ -199,6 +198,32 @@ body {
   margin-top: auto;
   padding: 10px;
   border-top: 1px solid var(--color-border);
+}
+
+.show-more-btn {
+  color: var(--color-text-muted) !important;
+  font-size: 12px;
+  justify-content: center;
+}
+
+.show-more-btn:hover {
+  color: var(--color-text-secondary) !important;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--color-primary);
+  opacity: 0.4;
 }
 
 /* ─── Context Menu ─── */
@@ -324,11 +349,21 @@ body {
   align-self: flex-end;
   background: var(--color-user-bubble);
   color: var(--color-user-text);
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-radius: 18px;
   max-width: 70%;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.message-bubble.user.with-image {
+  padding: 6px 8px;
+}
+
+.message-bubble.user.with-image .markdown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .message-bubble.user.queued {
@@ -780,6 +815,10 @@ body {
 
 .message-bubble.user .markdown-body img {
   max-height: 320px;
+}
+
+.message-bubble.user.with-image .markdown-body img {
+  margin: 0;
 }
 
 /* ─── Code Blocks (fallback) ─── */

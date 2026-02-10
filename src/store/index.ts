@@ -352,6 +352,9 @@ interface AppStore {
   // ─── State ───
   projects: Project[];
   sessions: Session[];
+  sessionsByProject: Record<string, Session[]>;
+  expandedProjects: Record<string, boolean>;
+  sidebarWidth: number;
   activeProjectId: string | null;
   activeSessionId: string | null;
   messages: Record<string, ChatMessage[]>;
@@ -375,12 +378,15 @@ interface AppStore {
   setActiveProject: (projectId: string | null) => Promise<void>;
 
   loadSessions: (projectId: string) => Promise<void>;
+  loadAllSessions: () => Promise<void>;
   createSession: (projectId: string, provider: AIProvider, name?: string) => Promise<void>;
   removeSession: (sessionId: string) => Promise<void>;
   renameSession: (sessionId: string, newName: string) => Promise<void>;
   setSessionModel: (sessionId: string, model: string | null) => Promise<void>;
   setActiveSession: (sessionId: string | null) => Promise<void>;
   stopSession: (sessionId: string) => Promise<void>;
+  toggleProjectExpanded: (projectId: string) => void;
+  setSidebarWidth: (width: number) => void;
 
   loadMessages: (sessionId: string) => Promise<void>;
   refreshSession: (sessionId: string) => Promise<void>;
@@ -398,10 +404,25 @@ interface AppStore {
   toggleSidebar: () => void;
 }
 
+function loadPersisted<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return JSON.parse(raw) as T;
+  } catch { /* ignore */ }
+  return fallback;
+}
+
+function savePersisted(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   // ─── Initial State ───
   projects: [],
   sessions: [],
+  sessionsByProject: {},
+  expandedProjects: loadPersisted<Record<string, boolean>>('expandedProjects', {}),
+  sidebarWidth: loadPersisted<number>('sidebarWidth', 260),
   activeProjectId: null,
   activeSessionId: null,
   messages: {},
@@ -450,6 +471,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         sessions: [],
       });
 
+      await get().loadAllSessions();
+
       if (nextActiveProjectId) {
         await get().loadSessions(nextActiveProjectId);
       }
@@ -476,7 +499,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const projects = state.projects.filter((p) => p.id !== projectId);
         const activeProjectId =
           state.activeProjectId === projectId ? null : state.activeProjectId;
-        return { projects, activeProjectId, sessions: activeProjectId ? state.sessions : [] };
+        const sessionsByProject = { ...state.sessionsByProject };
+        delete sessionsByProject[projectId];
+        const expandedProjects = { ...state.expandedProjects };
+        delete expandedProjects[projectId];
+        savePersisted('expandedProjects', expandedProjects);
+        return { projects, activeProjectId, sessions: activeProjectId ? state.sessions : [], sessionsByProject, expandedProjects };
       });
     } catch (e) {
       console.error('Failed to remove project:', e);
@@ -497,7 +525,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setActiveProject: async (projectId: string | null) => {
-    set({ activeProjectId: projectId, activeSessionId: null, sessions: [] });
+    set((state) => {
+      const expandedProjects = projectId
+        ? { ...state.expandedProjects, [projectId]: true }
+        : state.expandedProjects;
+      savePersisted('expandedProjects', expandedProjects);
+      return { activeProjectId: projectId, activeSessionId: null, sessions: [], expandedProjects };
+    });
     if (projectId) {
       await get().loadSessions(projectId);
     }
@@ -507,16 +541,39 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadSessions: async (projectId: string) => {
     try {
       const sessions = await api.listSessions(projectId);
-      set({ sessions });
+      set((state) => ({
+        sessions,
+        sessionsByProject: { ...state.sessionsByProject, [projectId]: sessions },
+      }));
     } catch (e) {
       console.error('Failed to load sessions:', e);
+    }
+  },
+
+  loadAllSessions: async () => {
+    try {
+      const allSessions = await api.getAllSessions();
+      const grouped: Record<string, Session[]> = {};
+      for (const s of allSessions) {
+        if (!grouped[s.project_id]) grouped[s.project_id] = [];
+        grouped[s.project_id].push(s);
+      }
+      set({ sessionsByProject: grouped });
+    } catch (e) {
+      console.error('Failed to load all sessions:', e);
     }
   },
 
   createSession: async (projectId: string, provider: AIProvider, name?: string) => {
     try {
       const session = await api.createSession(projectId, provider, name);
-      set((state) => ({ sessions: [...state.sessions, session] }));
+      set((state) => ({
+        sessions: [...state.sessions, session],
+        sessionsByProject: {
+          ...state.sessionsByProject,
+          [projectId]: [...(state.sessionsByProject[projectId] || []), session],
+        },
+      }));
       await get().setActiveSession(session.id);
     } catch (e) {
       console.error('Failed to create session:', e);
@@ -531,7 +588,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const sessions = state.sessions.filter((s) => s.id !== sessionId);
         const activeSessionId =
           state.activeSessionId === sessionId ? null : state.activeSessionId;
-        return { sessions, activeSessionId };
+        const sessionsByProject = { ...state.sessionsByProject };
+        for (const pid of Object.keys(sessionsByProject)) {
+          sessionsByProject[pid] = sessionsByProject[pid].filter((s) => s.id !== sessionId);
+        }
+        return { sessions, activeSessionId, sessionsByProject };
       });
     } catch (e) {
       console.error('Failed to remove session:', e);
@@ -541,11 +602,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
   renameSession: async (sessionId: string, newName: string) => {
     try {
       await api.renameSession(sessionId, newName);
-      set((state) => ({
-        sessions: state.sessions.map((s) =>
-          s.id === sessionId ? { ...s, name: newName } : s
-        ),
-      }));
+      const mapName = (s: Session) => s.id === sessionId ? { ...s, name: newName } : s;
+      set((state) => {
+        const sessionsByProject = { ...state.sessionsByProject };
+        for (const pid of Object.keys(sessionsByProject)) {
+          sessionsByProject[pid] = sessionsByProject[pid].map(mapName);
+        }
+        return {
+          sessions: state.sessions.map(mapName),
+          sessionsByProject,
+        };
+      });
     } catch (e) {
       console.error('Failed to rename session:', e);
     }
@@ -725,11 +792,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const newName = asString(data.name);
       if (!newName) return;
 
-      set((state) => ({
-        sessions: state.sessions.map((s) =>
-          s.id === session_id ? { ...s, name: newName } : s
-        ),
-      }));
+      const mapName = (s: Session) => s.id === session_id ? { ...s, name: newName } : s;
+      set((state) => {
+        const sessionsByProject = { ...state.sessionsByProject };
+        for (const pid of Object.keys(sessionsByProject)) {
+          sessionsByProject[pid] = sessionsByProject[pid].map(mapName);
+        }
+        return {
+          sessions: state.sessions.map(mapName),
+          sessionsByProject,
+        };
+      });
       return;
     }
 
@@ -903,6 +976,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error('Failed to update settings:', e);
       throw e;
     }
+  },
+
+  toggleProjectExpanded: (projectId: string) => {
+    set((state) => {
+      const expandedProjects = {
+        ...state.expandedProjects,
+        [projectId]: !state.expandedProjects[projectId],
+      };
+      savePersisted('expandedProjects', expandedProjects);
+      return { expandedProjects };
+    });
+  },
+
+  setSidebarWidth: (width: number) => {
+    const clamped = Math.max(200, Math.min(500, width));
+    savePersisted('sidebarWidth', clamped);
+    set({ sidebarWidth: clamped });
   },
 
   // ─── UI Actions ───

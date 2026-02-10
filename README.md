@@ -1,4 +1,4 @@
-# CodexHub
+# polyCode
 
 A Tauri desktop client for orchestrating **OpenAI Codex** and **Anthropic Claude Code** agents across local workspaces. Manage all your AI coding sessions in one place, organized by project.
 
@@ -35,7 +35,7 @@ A Tauri desktop client for orchestrating **OpenAI Codex** and **Anthropic Claude
 ## Architecture
 
 ```
-codex-hub/
+polycode/
 ├── src/                    # Frontend (React + TypeScript)
 │   ├── components/         # UI components
 │   │   ├── sidebar/        # Project list, session list
@@ -114,9 +114,9 @@ Settings are accessible from the sidebar gear icon:
 | **Claude Binary Path** | Custom path to `claude` binary (leave empty for default) |
 
 Data is persisted to the OS-specific app data directory:
-- **Linux:** `~/.local/share/codex-hub/`
-- **macOS:** `~/Library/Application Support/codex-hub/`
-- **Windows:** `%APPDATA%/codex-hub/`
+- **Linux:** `~/.local/share/polycode/`
+- **macOS:** `~/Library/Application Support/polycode/`
+- **Windows:** `%APPDATA%/polycode/`
 
 ## Inspired By
 

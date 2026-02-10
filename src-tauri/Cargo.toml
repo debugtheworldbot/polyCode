@@ -1,5 +1,6 @@
 [package]
-name = "codex-hub"
+name = "polycode"
+default-run = "polyCode"
 version = "0.1.0"
 description = "A Tauri desktop client for Codex and Claude Code"
 authors = ["you"]
@@ -9,8 +10,12 @@ edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "codex_hub_lib"
+name = "polycode_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "polyCode"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }
