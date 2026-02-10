@@ -1,5 +1,6 @@
 mod claude_adapter;
 mod codex_adapter;
+mod gemini_adapter;
 mod commands;
 mod state;
 mod storage;
@@ -17,6 +18,20 @@ pub fn run() {
         .setup(|app| {
             let data = tauri::async_runtime::block_on(storage::load_data());
             app.manage(AppState::new(data));
+
+            // Apply macOS vibrancy effect
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::window::Effect;
+                let window = app.get_webview_window("main").unwrap();
+                let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
+                    effects: vec![Effect::UnderWindowBackground],
+                    state: None,
+                    radius: None,
+                    color: None,
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -28,6 +43,7 @@ pub fn run() {
             commands::create_session,
             commands::remove_session,
             commands::rename_session,
+            commands::update_session_model,
             commands::get_messages,
             commands::send_message,
             commands::get_settings,

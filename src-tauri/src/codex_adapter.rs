@@ -41,13 +41,24 @@ pub async fn spawn_codex_session(
     session_id: String,
     project_path: String,
     codex_bin: Option<String>,
+    model: Option<String>,
     resume_thread_id: Option<String>,
     app_handle: AppHandle,
 ) -> Result<(tokio::process::Child, String), String> {
     let bin = resolve_codex_bin(&codex_bin);
 
     let mut cmd = Command::new(&bin);
-    cmd.arg("app-server")
+    cmd.arg("app-server");
+
+    if let Some(model_name) = model {
+        let trimmed = model_name.trim();
+        if !trimmed.is_empty() {
+            let escaped = trimmed.replace('"', "\\\"");
+            cmd.arg("-c").arg(format!("model=\"{}\"", escaped));
+        }
+    }
+
+    cmd
         .current_dir(&project_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

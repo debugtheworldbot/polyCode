@@ -10,11 +10,13 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "CodexHub",
         "titleBarStyle": "overlay",
         "hiddenTitle": true,
+        "transparent": true,
         "width": 1200,
         "height": 800,
         "minWidth": 800,

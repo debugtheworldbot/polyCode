@@ -16,6 +16,7 @@ const translations: Record<string, Record<string, string>> = {
     // Session
     'session.codex': 'Codex',
     'session.claude': 'Claude Code',
+    'session.gemini': 'Gemini',
     'session.rename': 'Rename',
     'session.delete': 'Delete',
     'session.stop': 'Stop',
@@ -85,6 +86,7 @@ const translations: Record<string, Record<string, string>> = {
     // Session
     'session.codex': 'Codex',
     'session.claude': 'Claude Code',
+    'session.gemini': 'Gemini',
     'session.rename': '重命名',
     'session.delete': '删除',
     'session.stop': '停止',

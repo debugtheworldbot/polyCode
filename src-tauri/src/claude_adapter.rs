@@ -24,6 +24,7 @@ pub async fn spawn_claude_session(
     project_path: String,
     prompt: String,
     claude_bin: Option<String>,
+    model: Option<String>,
     provider_session_id: Option<String>,
     app_handle: AppHandle,
 ) -> Result<tokio::process::Child, String> {
@@ -35,6 +36,13 @@ pub async fn spawn_claude_session(
         .arg("--output-format")
         .arg("stream-json")
         .arg("--verbose");
+
+    if let Some(model_name) = model {
+        let trimmed = model_name.trim();
+        if !trimmed.is_empty() {
+            cmd.arg("--model").arg(trimmed);
+        }
+    }
 
     // If we have a previous session, resume it
     if let Some(ref prev_sid) = provider_session_id {

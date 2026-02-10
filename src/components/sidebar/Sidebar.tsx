@@ -1,8 +1,16 @@
 import { Folder, MessageSquare, Settings, Plus, LayoutGrid, Clock } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 import { ProjectList } from './ProjectList';
 import { SessionList } from './SessionList';
+
+function handleDrag(e: React.MouseEvent) {
+  if (e.button !== 0) return;
+  const tag = (e.target as HTMLElement).closest('button, a, input, [role="button"]');
+  if (tag) return;
+  getCurrentWindow().startDragging();
+}
 
 export function Sidebar() {
   const {
@@ -17,6 +25,8 @@ export function Sidebar() {
 
   return (
     <div className="sidebar">
+      {/* Drag region for macOS traffic lights area */}
+      <div className="sidebar-drag-region" onMouseDown={handleDrag} />
       {/* Sidebar Header */}
       <div style={{ padding: '0 12px 16px' }}>
         <button 

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum AIProvider {
     Codex,
     Claude,
+    Gemini,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct Session {
     pub project_id: String,
     pub name: String,
     pub provider: AIProvider,
+    #[serde(default)]
+    pub model: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     /// For Claude Code, stores the CLI session_id for --resume

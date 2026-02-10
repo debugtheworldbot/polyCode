@@ -1,43 +1,59 @@
 @import "tailwindcss";
 
-/* ─── macOS Design Variables ─── */
+/* ─── macOS Liquid Glass Design Variables ─── */
 :root {
-  --color-bg: #ffffff;
-  --color-sidebar-bg: #f5f5f5; /* Light gray sidebar */
+  --color-bg: rgba(255, 255, 255, 0.72);
+  --color-bg-solid: #ffffff;
+  --color-sidebar-bg: rgba(245, 245, 245, 0.55);
   --color-sidebar-hover: rgba(0, 0, 0, 0.05);
-  --color-sidebar-active: #e3e3e3; /* Darker gray for selection */
-  --color-text: #1d1d1f; /* SF Pro almost black */
+  --color-sidebar-active: rgba(0, 0, 0, 0.08);
+  --color-text: #1d1d1f;
   --color-text-secondary: #86868b;
   --color-text-muted: #a1a1a6;
-  --color-border: #e5e5e5;
-  --color-divider: #f0f0f0;
-  
-  --color-user-bubble: #f2f2f7; /* Apple system gray 6 */
+  --color-border: rgba(0, 0, 0, 0.1);
+  --color-divider: rgba(0, 0, 0, 0.06);
+
+  --color-user-bubble: rgba(0, 0, 0, 0.06);
   --color-user-text: #1d1d1f;
-  
-  --color-primary: #007aff; /* Apple Blue */
+
+  --color-primary: #007aff;
   --color-primary-hover: #0062cc;
-  
+
+  --color-codex: #10b981;
+  --color-codex-bg: rgba(16, 185, 129, 0.15);
+  --color-claude: #f59e0b;
+  --color-claude-bg: rgba(245, 158, 11, 0.15);
+  --color-gemini: #2563eb;
+  --color-gemini-bg: rgba(37, 99, 235, 0.15);
+
   --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  
+
   --sidebar-width: 260px;
 }
 
 .dark {
-  --color-bg: #1e1e1e; /* VS Code dark / macOS dark window */
-  --color-sidebar-bg: #252526;
-  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
-  --color-sidebar-active: #37373d;
+  --color-bg: rgba(30, 30, 30, 0.68);
+  --color-bg-solid: #1e1e1e;
+  --color-sidebar-bg: rgba(37, 37, 38, 0.5);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --color-sidebar-active: rgba(255, 255, 255, 0.1);
   --color-text: #d4d4d4;
   --color-text-secondary: #9d9d9d;
   --color-text-muted: #6e6e6e;
-  --color-border: #333333;
-  --color-divider: #2b2b2b;
-  
-  --color-user-bubble: #333333;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-divider: rgba(255, 255, 255, 0.05);
+
+  --color-user-bubble: rgba(255, 255, 255, 0.08);
   --color-user-text: #ffffff;
-  
-  --color-primary: #0a84ff; /* Apple Dark Mode Blue */
+
+  --color-primary: #0a84ff;
+
+  --color-codex: #34d399;
+  --color-codex-bg: rgba(6, 78, 59, 0.4);
+  --color-claude: #fbbf24;
+  --color-claude-bg: rgba(69, 26, 3, 0.4);
+  --color-gemini: #60a5fa;
+  --color-gemini-bg: rgba(30, 99, 235, 0.3);
 }
 
 /* ─── Base Styles ─── */
@@ -48,11 +64,14 @@
   -webkit-font-smoothing: antialiased;
 }
 
+html, body {
+  background: transparent;
+}
+
 body {
   font-family: var(--font-stack);
-  background-color: var(--color-bg);
   color: var(--color-text);
-  font-size: 13px; /* macOS standard size */
+  font-size: 13px;
   overflow: hidden;
 }
 
@@ -69,11 +88,18 @@ body {
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   background: var(--color-sidebar-bg);
+  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  padding-top: 40px; /* space for macOS traffic lights */
   transition: width 0.2s ease;
+}
+
+.sidebar-drag-region {
+  height: 40px;
+  flex-shrink: 0;
+  cursor: default;
 }
 
 .sidebar.collapsed {
@@ -181,6 +207,8 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
+  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8);
   position: relative;
 }
 
@@ -209,6 +237,16 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+.session-model-chip {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: var(--color-bg);
 }
 
 .header-actions {
@@ -311,15 +349,15 @@ body {
 /* ─── Composer (Input Area) ─── */
 .composer-container {
   padding: 20px 40px 30px;
-  background: var(--color-bg);
+  background: transparent;
 }
 
 .composer-box {
-  background: var(--color-bg);
+  background: var(--color-bg-solid);
   border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.04);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -387,6 +425,49 @@ body {
 
 .model-btn {
   white-space: nowrap;
+}
+
+.model-selector-wrap {
+  position: relative;
+}
+
+.model-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 210px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+}
+
+.model-menu-item {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.model-menu-item:hover {
+  background: var(--color-sidebar-hover);
+}
+
+.model-menu-item.selected {
+  background: var(--color-sidebar-active);
+  font-weight: 600;
 }
 
 .model-status {
@@ -628,7 +709,7 @@ pre {
 }
 
 .modal-content {
-  background: var(--color-bg);
+  background: var(--color-bg-solid);
   border-radius: 12px;
   padding: 24px;
   width: 90%;

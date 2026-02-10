@@ -362,6 +362,7 @@ interface AppStore {
   createSession: (projectId: string, provider: AIProvider, name?: string) => Promise<void>;
   removeSession: (sessionId: string) => Promise<void>;
   renameSession: (sessionId: string, newName: string) => Promise<void>;
+  setSessionModel: (sessionId: string, model: string | null) => Promise<void>;
   setActiveSession: (sessionId: string | null) => Promise<void>;
   stopSession: (sessionId: string) => Promise<void>;
 
@@ -531,6 +532,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }));
     } catch (e) {
       console.error('Failed to rename session:', e);
+    }
+  },
+
+  setSessionModel: async (sessionId: string, model: string | null) => {
+    const normalized = model && model.trim().length > 0 ? model.trim() : null;
+    try {
+      await api.updateSessionModel(sessionId, normalized);
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, model: normalized, updated_at: Date.now() } : s
+        ),
+      }));
+    } catch (e) {
+      console.error('Failed to update session model:', e);
+      throw e;
     }
   },
 

@@ -86,13 +86,13 @@ export function MessageView() {
             justifyContent: 'center',
             fontSize: '28px',
             fontWeight: 700,
-            background: activeSession.provider === 'codex' ? 'var(--color-codex-bg)' : 'var(--color-claude-bg)',
-            color: activeSession.provider === 'codex' ? 'var(--color-codex)' : 'var(--color-claude)',
+            background: activeSession.provider === 'codex' ? 'var(--color-codex-bg)' : activeSession.provider === 'gemini' ? 'var(--color-gemini-bg)' : 'var(--color-claude-bg)',
+            color: activeSession.provider === 'codex' ? 'var(--color-codex)' : activeSession.provider === 'gemini' ? 'var(--color-gemini)' : 'var(--color-claude)',
           }}>
-            {activeSession.provider === 'codex' ? '⬡' : '◈'}
+            {activeSession.provider === 'codex' ? '⬡' : activeSession.provider === 'gemini' ? '★' : '◈'}
           </div>
           <p style={{ fontWeight: 500, color: 'var(--color-text)', fontSize: '15px' }}>
-            {activeSession.provider === 'codex' ? t('messages.welcomeCodex') : t('messages.welcomeClaude')}
+            {activeSession.provider === 'codex' ? t('messages.welcomeCodex') : activeSession.provider === 'gemini' ? 'Gemini Session' : t('messages.welcomeClaude')}
           </p>
           <p>{t('messages.welcome')}</p>
         </div>

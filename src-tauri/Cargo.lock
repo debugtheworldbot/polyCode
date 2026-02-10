@@ -558,9 +558,11 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
+ "hex",
  "log",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

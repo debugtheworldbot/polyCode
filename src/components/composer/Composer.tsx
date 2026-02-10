@@ -2,11 +2,22 @@ import { useState, useRef, useEffect } from 'react';
 import { Square, Plus, Mic, ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
+import { MODEL_OPTIONS_BY_PROVIDER, getSessionModelLabel } from '../../constants/models';
 
 export function Composer() {
-  const { activeSessionId, sessions, queuedMessages, isSending, sendMessage, stopSession } = useAppStore();
+  const {
+    activeSessionId,
+    sessions,
+    queuedMessages,
+    isSending,
+    sendMessage,
+    stopSession,
+    setSessionModel,
+  } = useAppStore();
   const [input, setInput] = useState('');
+  const [showModelMenu, setShowModelMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   useEffect(() => {
@@ -21,6 +32,20 @@ export function Composer() {
       textareaRef.current.focus();
     }
   }, [activeSessionId]);
+
+  useEffect(() => {
+    setShowModelMenu(false);
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!modelMenuRef.current) return;
+      if (modelMenuRef.current.contains(event.target as Node)) return;
+      setShowModelMenu(false);
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim() || !activeSessionId) return;
@@ -44,7 +69,12 @@ export function Composer() {
 
   if (!activeSessionId) return null;
 
-  const modelLabel = activeSession?.provider === 'claude' ? 'Claude Code' : 'GPT-5.3-Codex';
+  if (!activeSession) return null;
+
+  const modelOptions = MODEL_OPTIONS_BY_PROVIDER[activeSession.provider];
+  const selectedModel = activeSession.model?.trim() || '';
+  const selectedOption = modelOptions.find((option) => option.value === selectedModel);
+  const modelLabel = selectedOption?.label || getSessionModelLabel(activeSession.provider, selectedModel);
   const queuedCount = queuedMessages[activeSessionId]?.length || 0;
   const statusLabel = isSending
     ? queuedCount > 0
@@ -71,14 +101,44 @@ export function Composer() {
             <button className="icon-btn" title="Add Attachment">
               <Plus size={18} />
             </button>
-            <button className="icon-btn model-btn" style={{ gap: '6px', paddingRight: '8px', fontSize: '12px' }}>
-              <span>{modelLabel}</span>
-              <span className={`model-status ${statusClassName}`}>
-                <span className="model-status-dot" />
-                <span>{statusLabel}</span>
-              </span>
-              <ChevronDown size={12} />
-            </button>
+            <div className="model-selector-wrap" ref={modelMenuRef}>
+              <button
+                className="icon-btn model-btn"
+                style={{ gap: '6px', paddingRight: '8px', fontSize: '12px' }}
+                onClick={() => setShowModelMenu((prev) => !prev)}
+              >
+                <span>{modelLabel}</span>
+                <span className={`model-status ${statusClassName}`}>
+                  <span className="model-status-dot" />
+                  <span>{statusLabel}</span>
+                </span>
+                <ChevronDown size={12} />
+              </button>
+              {showModelMenu && (
+                <div className="model-menu">
+                  {modelOptions.map((option) => {
+                    const isSelected = option.value === selectedModel;
+                    return (
+                      <button
+                        key={option.value || '__default'}
+                        className={`model-menu-item ${isSelected ? 'selected' : ''}`}
+                        onClick={async () => {
+                          try {
+                            await setSessionModel(activeSessionId, option.value || null);
+                          } catch (e) {
+                            console.error('Failed to switch model:', e);
+                          }
+                          setShowModelMenu(false);
+                        }}
+                      >
+                        <span>{option.label}</span>
+                        {isSelected && <span>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
                <span>High</span>
                <ChevronDown size={12} />

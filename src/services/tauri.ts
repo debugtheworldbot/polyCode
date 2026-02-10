@@ -50,6 +50,13 @@ export async function renameSession(sessionId: string, newName: string): Promise
   return invoke<void>('rename_session', { sessionId, newName });
 }
 
+export async function updateSessionModel(
+  sessionId: string,
+  model: string | null
+): Promise<void> {
+  return invoke<void>('update_session_model', { sessionId, model });
+}
+
 export async function stopSession(sessionId: string): Promise<void> {
   return invoke<void>('stop_session', { sessionId });
 }

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { MessageCircle, Plus, MoreHorizontal, Pencil, Trash2, Square, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
+import { getSessionModelLabel } from '../../constants/models';
 
 export function SessionList() {
   const {
@@ -97,11 +98,11 @@ export function SessionList() {
             justifyContent: 'center',
             fontSize: '11px',
             fontWeight: 700,
-            background: session.provider === 'codex' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-            color: session.provider === 'codex' ? '#10b981' : '#f59e0b',
+            background: session.provider === 'codex' ? 'rgba(16, 185, 129, 0.15)' : session.provider === 'gemini' ? 'rgba(37, 99, 235, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+            color: session.provider === 'codex' ? '#10b981' : session.provider === 'gemini' ? '#2563eb' : '#f59e0b',
             flexShrink: 0
           }}>
-            {session.provider === 'codex' ? '⬡' : '◈'}
+            {session.provider === 'codex' ? '⬡' : session.provider === 'gemini' ? '★' : '◈'}
           </div>
           <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {editingId === session.id ? (
@@ -118,7 +119,9 @@ export function SessionList() {
                 style={{ width: '100%', border: 'none', background: 'white', padding: '0 2px', borderRadius: '2px' }}
               />
             ) : (
-              session.name
+              <span title={getSessionModelLabel(session.provider, session.model)}>
+                {session.name}
+              </span>
             )}
           </div>
           <button

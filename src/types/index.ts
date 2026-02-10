@@ -1,4 +1,4 @@
-export type AIProvider = 'codex' | 'claude';
+export type AIProvider = 'codex' | 'claude' | 'gemini';
 
 export interface Project {
   id: string;
@@ -12,6 +12,7 @@ export interface Session {
   project_id: string;
   name: string;
   provider: AIProvider;
+  model?: string | null;
   created_at: number;
   updated_at: number;
   provider_session_id?: string | null;

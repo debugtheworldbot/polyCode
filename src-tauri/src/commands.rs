@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::claude_adapter;
 use crate::codex_adapter;
+use crate::gemini_adapter;
 use crate::state::{ActiveSession, AppState};
 use crate::storage;
 use crate::types::*;
@@ -114,6 +115,10 @@ pub async fn list_sessions(
         eprintln!("Failed to sync Codex sessions for project {}: {}", project_id, e);
     }
 
+    if let Err(e) = sync_gemini_sessions_for_project(&project_id, &project_path, &state).await {
+        eprintln!("Failed to sync Gemini sessions for project {}: {}", project_id, e);
+    }
+
     let data = state.data.lock().await;
     let sessions: Vec<Session> = data
         .sessions
@@ -142,6 +147,7 @@ pub async fn create_session(
         let prefix = match ai_provider {
             AIProvider::Codex => "Codex",
             AIProvider::Claude => "Claude",
+            AIProvider::Gemini => "Gemini",
         };
         format!("{} Session", prefix)
     });
@@ -151,6 +157,7 @@ pub async fn create_session(
         project_id,
         name: session_name,
         provider: ai_provider,
+        model: None,
         created_at: now,
         updated_at: now,
         provider_session_id: None,
@@ -195,6 +202,34 @@ pub async fn rename_session(
         session.name = new_name;
     }
     storage::save_data(&data).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_session_model(
+    session_id: String,
+    model: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let normalized_model = model.and_then(|m| {
+        let trimmed = m.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let mut data = state.data.lock().await;
+    let session = data
+        .sessions
+        .iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or("Session not found")?;
+    session.model = normalized_model;
+    session.updated_at = chrono::Utc::now().timestamp_millis();
+    storage::save_data(&data).await?;
+
     Ok(())
 }
 
@@ -318,6 +353,7 @@ pub async fn send_message(
                 &content,
                 &project.path,
                 &settings.codex_bin,
+                session.model.as_deref(),
                 session.provider_session_id.as_deref(),
                 &state,
                 &app,
@@ -330,11 +366,15 @@ pub async fn send_message(
                 &content,
                 &project.path,
                 &settings.claude_bin,
+                session.model.as_deref(),
                 session.provider_session_id.as_deref(),
                 &state,
                 &app,
             )
             .await?;
+        }
+        AIProvider::Gemini => {
+            return Err("Gemini provider is not supported yet".to_string());
         }
     }
 
@@ -353,6 +393,7 @@ async fn send_codex_message_impl(
     content: &str,
     project_path: &str,
     codex_bin: &Option<String>,
+    model: Option<&str>,
     provider_session_id: Option<&str>,
     state: &State<'_, AppState>,
     app: &AppHandle,
@@ -366,6 +407,7 @@ async fn send_codex_message_impl(
             session_id.to_string(),
             project_path.to_string(),
             codex_bin.clone(),
+            model.map(|m| m.to_string()),
             provider_session_id.map(|s| s.to_string()),
             app.clone(),
         )
@@ -409,18 +451,33 @@ async fn send_codex_message_impl(
 
         if let Some(ref mut child) = session.child {
             if let Some(ref mut stdin) = child.stdin {
+                let mut turn_params = json!({
+                    "threadId": thread_id,
+                    "input": [
+                        {
+                            "type": "text",
+                            "text": content,
+                        }
+                    ],
+                });
+
+                if let Some(model_name) = model.and_then(|m| {
+                    let trimmed = m.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                }) {
+                    if let Some(obj) = turn_params.as_object_mut() {
+                        obj.insert("model".to_string(), Value::String(model_name));
+                    }
+                }
+
                 codex_adapter::send_codex_message(
                     stdin,
                     "turn/start",
-                    json!({
-                        "threadId": thread_id,
-                        "input": [
-                            {
-                                "type": "text",
-                                "text": content,
-                            }
-                        ],
-                    }),
+                    turn_params,
                 )
                 .await?;
             }
@@ -435,6 +492,7 @@ async fn send_claude_message_impl(
     content: &str,
     project_path: &str,
     claude_bin: &Option<String>,
+    model: Option<&str>,
     provider_session_id: Option<&str>,
     state: &State<'_, AppState>,
     app: &AppHandle,
@@ -446,6 +504,7 @@ async fn send_claude_message_impl(
         project_path.to_string(),
         content.to_string(),
         claude_bin.clone(),
+        model.map(|m| m.to_string()),
         provider_session_id.map(|s| s.to_string()),
         app.clone(),
     )
@@ -520,6 +579,7 @@ async fn sync_codex_sessions_for_project(
             project_id: project_id.to_string(),
             name: derive_codex_session_name(&thread.preview),
             provider: AIProvider::Codex,
+            model: None,
             created_at,
             updated_at,
             provider_session_id: Some(thread.thread_id),
@@ -681,4 +741,94 @@ pub async fn stop_session(
 pub async fn get_all_sessions(state: State<'_, AppState>) -> Result<Vec<Session>, String> {
     let data = state.data.lock().await;
     Ok(data.sessions.clone())
+}
+
+async fn sync_gemini_sessions_for_project(
+    project_id: &str,
+    project_path: &str,
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    let gemini_sessions = gemini_adapter::list_gemini_sessions(project_path).await;
+
+    let mut data = state.data.lock().await;
+    let mut changed = false;
+
+    for session_path in gemini_sessions {
+        // Read session from file
+        let (gemini_session_id, updated_at, messages) = match gemini_adapter::read_gemini_session(&session_path).await {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("Failed to read Gemini session {:?}: {}", session_path, e);
+                continue;
+            }
+        };
+
+        // Check if session already exists
+        if let Some(existing_idx) = data.sessions.iter().position(|s| {
+            s.project_id == project_id
+                && s.provider == AIProvider::Gemini
+                && s.provider_session_id.as_deref() == Some(gemini_session_id.as_str())
+        }) {
+            let mut should_sync_messages = false;
+            let existing_session_id;
+            {
+                let existing = &mut data.sessions[existing_idx];
+                existing_session_id = existing.id.clone();
+                if existing.updated_at < updated_at {
+                    existing.updated_at = updated_at;
+                    changed = true;
+                    should_sync_messages = true;
+                }
+            }
+
+            if should_sync_messages {
+                drop(data); // Unlock to save messages
+                storage::save_messages(&existing_session_id, &messages).await?;
+                data = state.data.lock().await; // Re-lock
+            }
+            continue;
+        }
+
+        // Create new session
+        let new_session_id = uuid::Uuid::new_v4().to_string();
+        let created_at = messages.first().map(|m| m.created_at).unwrap_or(updated_at);
+        
+        let session_name = messages
+            .first()
+            .map(|m| {
+                let text = m.content.lines().next().unwrap_or("Gemini Session");
+                let mut truncated: String = text.chars().take(60).collect();
+                if text.chars().count() > 60 {
+                    truncated.push('…');
+                }
+                truncated
+            })
+            .unwrap_or_else(|| "Gemini Session".to_string());
+
+        let new_session = Session {
+            id: new_session_id.clone(),
+            project_id: project_id.to_string(),
+            name: session_name,
+            provider: AIProvider::Gemini,
+            created_at,
+            updated_at,
+            provider_session_id: Some(gemini_session_id),
+            model: None, 
+        };
+
+        drop(data); // Unlock to save messages
+        storage::save_messages(&new_session_id, &messages).await?;
+        data = state.data.lock().await; // Re-lock
+        
+        data.sessions.push(new_session);
+        changed = true;
+    }
+
+    if changed {
+        let snapshot = data.clone();
+        drop(data);
+        storage::save_data(&snapshot).await?;
+    }
+
+    Ok(())
 }
