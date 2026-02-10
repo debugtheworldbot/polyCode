@@ -129,6 +129,10 @@ export async function savePastedImage(dataUrl: string): Promise<string> {
   return invoke<string>('save_pasted_image', { dataUrl });
 }
 
+export async function readImageDataUrl(path: string): Promise<string> {
+  return invoke<string>('read_image_data_url', { path });
+}
+
 // ─── Event Listeners ───
 
 export function onSessionEvent(

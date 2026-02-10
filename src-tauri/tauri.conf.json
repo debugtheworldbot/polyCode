@@ -30,7 +30,15 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**/*"]
+        "scope": [
+          "$APPCACHE/**",
+          "$TEMP/**",
+          "$HOME/**",
+          "$DESKTOP/**",
+          "$DOCUMENT/**",
+          "$DOWNLOAD/**",
+          "$PICTURE/**"
+        ]
       }
     }
   },

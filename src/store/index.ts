@@ -167,6 +167,22 @@ function mergeMessage(
     return [...existing, createMessage(sessionId, parsed)];
   }
 
+  // Guard against duplicated "new" events from provider stream.
+  if (isSameKind && last.content === parsed.content) {
+    return existing;
+  }
+
+  if (parsed.messageType === 'tool') {
+    const recent = existing.slice(-8);
+    const hasRecentDuplicate = recent.some(
+      (msg) =>
+        msg.role === parsed.role &&
+        msg.message_type === parsed.messageType &&
+        msg.content === parsed.content
+    );
+    if (hasRecentDuplicate) return existing;
+  }
+
   return [...existing, createMessage(sessionId, parsed)];
 }
 

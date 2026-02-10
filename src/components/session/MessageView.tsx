@@ -4,8 +4,13 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../../store';
+import * as api from '../../services/tauri';
 import { t } from '../../i18n';
 import type { ChatMessage } from '../../types';
+
+type ContentSegment =
+  | { type: 'text'; value: string }
+  | { type: 'image'; value: string };
 
 function getFileName(path: string): string {
   const normalized = path.replace(/\\/g, '/');
@@ -13,20 +18,79 @@ function getFileName(path: string): string {
   return segments[segments.length - 1] || 'image';
 }
 
-function renderLocalImagePlaceholders(content: string): string {
-  return content.replace(/^\[Image:\s*(.+?)\]\s*$/gm, (_match, rawPath: string) => {
-    const path = rawPath.trim();
-    if (!path) return '';
-    const src = convertFileSrc(path);
-    const fileName = getFileName(path);
-    return `![${fileName}](${src})`;
-  });
+function splitMessageContent(content: string): ContentSegment[] {
+  const segments: ContentSegment[] = [];
+  const textBuffer: string[] = [];
+
+  const flushText = () => {
+    const text = textBuffer.join('\n').trim();
+    textBuffer.length = 0;
+    if (text) segments.push({ type: 'text', value: text });
+  };
+
+  for (const line of content.split('\n')) {
+    const match = line.match(/^\[Image:\s*(.+?)\]\s*$/);
+    if (match) {
+      flushText();
+      const path = match[1].trim();
+      if (path) segments.push({ type: 'image', value: path });
+      continue;
+    }
+    textBuffer.push(line);
+  }
+
+  flushText();
+  if (segments.length === 0 && content.trim()) {
+    return [{ type: 'text', value: content.trim() }];
+  }
+  return segments;
+}
+
+function LocalImage({ path, alt }: { path: string; alt?: string }) {
+  const [resolvedSrc, setResolvedSrc] = useState(convertFileSrc(path));
+  const [fallbackTried, setFallbackTried] = useState(false);
+
+  useEffect(() => {
+    setFallbackTried(false);
+    setResolvedSrc(convertFileSrc(path));
+  }, [path]);
+
+  const handleError = async () => {
+    if (fallbackTried) return;
+    setFallbackTried(true);
+    try {
+      const dataUrl = await api.readImageDataUrl(path);
+      setResolvedSrc(dataUrl);
+    } catch (e) {
+      console.error('Failed to load local image fallback:', e);
+    }
+  };
+
+  return <img src={resolvedSrc} alt={alt || getFileName(path)} onError={handleError} />;
+}
+
+function MessageContent({ content }: { content: string }) {
+  const segments = splitMessageContent(content);
+  return (
+    <>
+      {segments.map((segment, index) => {
+        if (segment.type === 'image') {
+          return <LocalImage key={`img-${index}-${segment.value}`} path={segment.value} />;
+        }
+
+        return (
+          <ReactMarkdown key={`txt-${index}`} remarkPlugins={[remarkGfm]}>
+            {segment.value}
+          </ReactMarkdown>
+        );
+      })}
+    </>
+  );
 }
 
 function MessageBubble({ message, provider }: { message: ChatMessage; provider?: string }) {
   const roleClass = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
   const isTool = message.message_type === 'tool';
-  const renderedContent = renderLocalImagePlaceholders(message.content);
 
   if (isTool) {
     return (
@@ -39,7 +103,7 @@ function MessageBubble({ message, provider }: { message: ChatMessage; provider?:
   return (
     <div className={`message-bubble ${roleClass} animate-fadeIn`} style={{ animationDelay: '0.1s' }}>
       <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{renderedContent}</ReactMarkdown>
+        <MessageContent content={message.content} />
       </div>
     </div>
   );
@@ -127,9 +191,7 @@ export function MessageView() {
           style={{ animationDelay: `${0.06 * (index + 1)}s` }}
         >
           <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {renderLocalImagePlaceholders(content)}
-            </ReactMarkdown>
+            <MessageContent content={content} />
           </div>
           <span className="queued-tag">queued</span>
         </div>

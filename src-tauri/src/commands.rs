@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 use crate::claude_adapter;
@@ -935,7 +935,7 @@ pub async fn check_cli_available(cli_name: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn save_pasted_image(data_url: String) -> Result<String, String> {
+pub async fn save_pasted_image(data_url: String, app: AppHandle) -> Result<String, String> {
     let (header, encoded) = data_url
         .split_once(',')
         .ok_or("Invalid image data URL")?;
@@ -951,7 +951,11 @@ pub async fn save_pasted_image(data_url: String) -> Result<String, String> {
         .decode(encoded.trim())
         .map_err(|e| format!("Failed to decode image data: {}", e))?;
 
-    let dir = std::env::temp_dir().join("codex-hub-images");
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("codex-hub-cache"))
+        .join("images");
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Failed to create image cache dir: {}", e))?;
@@ -963,6 +967,33 @@ pub async fn save_pasted_image(data_url: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to save pasted image: {}", e))?;
 
     Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn read_image_data_url(path: String) -> Result<String, String> {
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Failed to read image file: {}", e))?;
+    let mime = image_mime_for_path(&path);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
+fn image_mime_for_path(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+
+    match ext.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 fn image_extension_for_mime(mime: &str) -> &'static str {
