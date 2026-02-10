@@ -24,7 +24,7 @@ export function SessionHeader() {
   if (!activeSession) {
     return (
       <div className="main-header" onMouseDown={handleDrag}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: trafficLightPad }}>
+        <div className="main-header-left" style={{ paddingLeft: trafficLightPad }}>
           <button className="header-btn" onClick={toggleSidebar} style={{ border: 'none', padding: '4px' }}>
             <Sidebar size={16} />
           </button>
@@ -37,7 +37,7 @@ export function SessionHeader() {
 
   return (
     <div className="main-header" onMouseDown={handleDrag}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: trafficLightPad }}>
+      <div className="main-header-left" style={{ paddingLeft: trafficLightPad }}>
         <button className="header-btn" onClick={toggleSidebar} style={{ border: 'none', padding: '4px', marginRight: '4px' }}>
           <Sidebar size={16} />
         </button>
@@ -45,11 +45,11 @@ export function SessionHeader() {
         <div className="breadcrumb">
            {activeProject && (
              <>
-               <span style={{ opacity: 0.7 }}>{activeProject.name}</span>
+               <span className="breadcrumb-project">{activeProject.name}</span>
                <ChevronRight size={14} style={{ opacity: 0.4 }} />
              </>
            )}
-           <span>{activeSession.name}</span>
+           <span className="breadcrumb-session">{activeSession.name}</span>
            <span className="session-model-chip">{modelLabel}</span>
         </div>
       </div>

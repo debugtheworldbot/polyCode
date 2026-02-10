@@ -206,10 +206,10 @@ export function Composer() {
                 style={{ gap: '6px', paddingRight: '8px', fontSize: '12px' }}
                 onClick={() => setShowModelMenu((prev) => !prev)}
               >
-                <span>{modelLabel}</span>
+                <span className="model-label">{modelLabel}</span>
                 <span className={`model-status ${statusClassName}`}>
                   <span className="model-status-dot" />
-                  <span>{statusLabel}</span>
+                  <span className="model-status-text">{statusLabel}</span>
                 </span>
                 <ChevronDown size={12} />
               </button>

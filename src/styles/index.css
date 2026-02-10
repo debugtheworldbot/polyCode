@@ -80,6 +80,7 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  min-width: 980px;
   overflow: hidden;
 }
 
@@ -264,6 +265,7 @@ body {
 /* ─── Main Content ─── */
 .main-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
@@ -278,6 +280,7 @@ body {
   padding: 0 20px;
   display: flex;
   align-items: center;
+  gap: 12px;
   justify-content: space-between;
   border-bottom: 1px solid var(--color-divider);
   flex-shrink: 0;
@@ -290,13 +293,41 @@ body {
   -webkit-app-region: no-drag; /* buttons remain clickable */
 }
 
+.main-header-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+}
+
 .breadcrumb {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+.breadcrumb-project {
+  opacity: 0.7;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumb-session {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-model-chip {
@@ -307,12 +338,15 @@ body {
   border-radius: 999px;
   padding: 1px 8px;
   background: var(--color-bg);
+  flex-shrink: 0;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .header-btn {
@@ -420,6 +454,7 @@ body {
 .composer-container {
   padding: 20px 40px 30px;
   background: transparent;
+  min-width: 0;
 }
 
 .composer-box {
@@ -431,6 +466,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   transition: box-shadow 0.2s, border-color 0.2s;
 }
 
@@ -462,6 +499,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 
 .composer-attachments {
@@ -523,12 +562,16 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .composer-actions-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .icon-btn {
@@ -550,10 +593,21 @@ body {
 
 .model-btn {
   white-space: nowrap;
+  min-width: 0;
+  max-width: min(100%, 420px);
 }
 
 .model-selector-wrap {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.model-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-menu {
@@ -605,6 +659,14 @@ body {
   font-weight: 500;
   border: 1px solid transparent;
   line-height: 1;
+  min-width: 0;
+}
+
+.model-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-status-dot {
@@ -661,6 +723,21 @@ body {
 .send-btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+@media (max-width: 1120px) {
+  .composer-container {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .header-actions .header-btn span {
+    display: none;
+  }
+
+  .header-btn {
+    padding: 4px 8px;
+  }
 }
 
 /* ─── Scrollbar ─── */

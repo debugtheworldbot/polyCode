@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { Settings, Plus } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../../store';
@@ -46,6 +46,20 @@ export function Sidebar() {
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+  }, [sidebarWidth, setSidebarWidth]);
+
+  useEffect(() => {
+    // Clamp persisted width on mount and keep it valid on window resize.
+    const enforceSidebarBounds = () => {
+      const maxByViewport = Math.max(200, window.innerWidth - 620);
+      const clamped = Math.max(200, Math.min(sidebarWidth, 500, maxByViewport));
+      if (clamped !== sidebarWidth) {
+        setSidebarWidth(clamped);
+      }
+    };
+    enforceSidebarBounds();
+    window.addEventListener('resize', enforceSidebarBounds);
+    return () => window.removeEventListener('resize', enforceSidebarBounds);
   }, [sidebarWidth, setSidebarWidth]);
 
   if (sidebarCollapsed) return null;

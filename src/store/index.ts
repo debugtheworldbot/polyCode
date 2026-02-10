@@ -990,7 +990,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setSidebarWidth: (width: number) => {
-    const clamped = Math.max(200, Math.min(500, width));
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    // Keep main content usable when sidebar is expanded.
+    const maxByViewport = Math.max(200, viewportWidth - 620);
+    const clamped = Math.max(200, Math.min(width, 500, maxByViewport));
     savePersisted('sidebarWidth', clamped);
     set({ sidebarWidth: clamped });
   },

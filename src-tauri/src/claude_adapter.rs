@@ -1,11 +1,12 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::state::AppState;
 use crate::storage;
-use crate::types::{ChatMessage, MessageRole, MessageType, SessionEvent};
+use crate::types::{AIProvider, ChatMessage, MessageRole, MessageType, SessionEvent};
 
 /// Resolve the claude binary path
 fn resolve_claude_bin(custom: &Option<String>) -> String {
@@ -115,6 +116,21 @@ pub async fn spawn_claude_session(
                             data: json!({ "message": format!("Failed to persist Claude message: {}", e) }),
                         },
                     );
+                }
+
+                // Auto-rename session from assistant response
+                let suggested = derive_claude_title_from_response(&text);
+                if !suggested.is_empty() {
+                    if let Ok(true) = maybe_auto_rename_claude_session(&handle, &sid, &suggested).await {
+                        let _ = handle.emit(
+                            "session-event",
+                            &SessionEvent {
+                                session_id: sid.clone(),
+                                event_type: "session_renamed".to_string(),
+                                data: json!({ "name": suggested }),
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -331,6 +347,63 @@ fn parse_timestamp(data: &Value) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(ts_str)
         .ok()
         .map(|dt| dt.timestamp_millis())
+}
+
+/// Derive a short title from the assistant's response text.
+/// Takes the first non-empty line, strips markdown markers, truncates to 50 chars.
+fn derive_claude_title_from_response(text: &str) -> String {
+    let first_line = text
+        .lines()
+        .map(|l| l.trim())
+        .map(|l| l.trim_start_matches('#').trim())
+        .find(|l| !l.is_empty() && l.len() > 2)
+        .unwrap_or("");
+
+    if first_line.is_empty() {
+        return String::new();
+    }
+
+    let mut truncated: String = first_line.chars().take(50).collect();
+    if first_line.chars().count() > 50 {
+        truncated.push('\u{2026}');
+    }
+    truncated
+}
+
+/// Auto-rename a Claude session if it still has the default name.
+async fn maybe_auto_rename_claude_session(
+    app_handle: &AppHandle,
+    session_id: &str,
+    suggested_name: &str,
+) -> Result<bool, String> {
+    let state = app_handle.state::<AppState>();
+    let mut data = state.data.lock().await;
+
+    let session = match data.sessions.iter_mut().find(|s| s.id == session_id) {
+        Some(s) => s,
+        None => return Ok(false),
+    };
+
+    if session.provider != AIProvider::Claude {
+        return Ok(false);
+    }
+
+    if !session.name.trim().eq_ignore_ascii_case("Claude Session") {
+        return Ok(false);
+    }
+
+    if session.name == suggested_name {
+        return Ok(false);
+    }
+
+    session.name = suggested_name.to_string();
+    session.updated_at = chrono::Utc::now().timestamp_millis();
+
+    let data_snapshot = data.clone();
+    drop(data);
+
+    storage::save_data(&data_snapshot).await?;
+    Ok(true)
 }
 
 fn extract_message_text(data: &Value) -> Option<String> {
