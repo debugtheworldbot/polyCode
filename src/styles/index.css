@@ -316,6 +316,54 @@ body {
   background: var(--color-sidebar-hover);
 }
 
+.model-btn {
+  white-space: nowrap;
+}
+
+.model-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  line-height: 1;
+}
+
+.model-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.model-status.running {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.model-status.running .model-status-dot {
+  background: #10b981;
+}
+
+.model-status.idle {
+  color: var(--color-text-secondary);
+  background: var(--color-sidebar-hover);
+  border-color: var(--color-border);
+}
+
+.model-status.idle .model-status-dot {
+  background: var(--color-text-muted);
+}
+
+.dark .model-status.running {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
 .send-btn {
   background: var(--color-text); /* Black button like in screenshot */
   color: white;

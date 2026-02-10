@@ -64,13 +64,9 @@ function mergeMessage(
   if (parsed.mode === 'replace_or_create') {
     if (isSameKind) {
       if (last.content === parsed.content) return existing;
-      if (parsed.content.includes(last.content)) {
-        const updated = [...existing];
-        updated[updated.length - 1] = { ...last, content: parsed.content };
-        return updated;
-      }
-      if (last.content.includes(parsed.content)) return existing;
-      return [...existing, createMessage(sessionId, parsed)];
+      const updated = [...existing];
+      updated[updated.length - 1] = { ...last, content: parsed.content };
+      return updated;
     }
     return [...existing, createMessage(sessionId, parsed)];
   }

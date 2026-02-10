@@ -77,6 +77,21 @@ pub async fn list_sessions(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<Session>, String> {
+    let (project_path, codex_bin) = {
+        let data = state.data.lock().await;
+        let project = data
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .cloned()
+            .ok_or("Project not found")?;
+        (project.path, data.settings.codex_bin.clone())
+    };
+
+    if let Err(e) = sync_codex_sessions_for_project(&project_id, &project_path, &codex_bin, &state).await {
+        eprintln!("Failed to sync Codex sessions for project {}: {}", project_id, e);
+    }
+
     let data = state.data.lock().await;
     let sessions: Vec<Session> = data
         .sessions
@@ -164,9 +179,54 @@ pub async fn rename_session(
 // ─── Message Commands ───
 
 #[tauri::command]
-pub async fn get_messages(session_id: String) -> Result<Vec<ChatMessage>, String> {
-    let messages = storage::load_messages(&session_id).await;
-    Ok(messages)
+pub async fn get_messages(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ChatMessage>, String> {
+    let local_messages = storage::load_messages(&session_id).await;
+    if !local_messages.is_empty() {
+        return Ok(local_messages);
+    }
+
+    let (session, project, codex_bin) = {
+        let data = state.data.lock().await;
+        let session = data
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .cloned()
+            .ok_or("Session not found")?;
+        let project = data
+            .projects
+            .iter()
+            .find(|p| p.id == session.project_id)
+            .cloned()
+            .ok_or("Project not found")?;
+        (session, project, data.settings.codex_bin.clone())
+    };
+
+    if session.provider != AIProvider::Codex {
+        return Ok(local_messages);
+    }
+
+    let Some(thread_id) = session.provider_session_id else {
+        return Ok(local_messages);
+    };
+
+    let imported_messages = codex_adapter::read_codex_thread_messages(
+        project.path.clone(),
+        codex_bin,
+        thread_id,
+        session_id.clone(),
+    )
+    .await?;
+
+    if imported_messages.is_empty() {
+        return Ok(local_messages);
+    }
+
+    storage::save_messages(&session_id, &imported_messages).await?;
+    Ok(imported_messages)
 }
 
 #[tauri::command]
@@ -225,6 +285,7 @@ pub async fn send_message(
                 &content,
                 &project.path,
                 &settings.codex_bin,
+                session.provider_session_id.as_deref(),
                 &state,
                 &app,
             )
@@ -259,10 +320,12 @@ async fn send_codex_message_impl(
     content: &str,
     project_path: &str,
     codex_bin: &Option<String>,
+    provider_session_id: Option<&str>,
     state: &State<'_, AppState>,
     app: &AppHandle,
 ) -> Result<(), String> {
     let mut active = state.active_sessions.lock().await;
+    let mut started_thread_id: Option<String> = None;
 
     if !active.contains_key(session_id) {
         // Spawn new codex app-server
@@ -270,6 +333,7 @@ async fn send_codex_message_impl(
             session_id.to_string(),
             project_path.to_string(),
             codex_bin.clone(),
+            provider_session_id.map(|s| s.to_string()),
             app.clone(),
         )
         .await?;
@@ -279,9 +343,10 @@ async fn send_codex_message_impl(
             Arc::new(Mutex::new(ActiveSession {
                 child: Some(child),
                 session_id: session_id.to_string(),
-                codex_thread_id: Some(codex_thread_id),
+                codex_thread_id: Some(codex_thread_id.clone()),
             })),
         );
+        started_thread_id = Some(codex_thread_id);
 
         // Wait a bit for initialization
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -289,6 +354,18 @@ async fn send_codex_message_impl(
 
     let session_arc = active.get(session_id).cloned();
     drop(active);
+
+    if let Some(thread_id) = started_thread_id {
+        if !thread_id.is_empty() {
+            let mut data = state.data.lock().await;
+            if let Some(session) = data.sessions.iter_mut().find(|s| s.id == session_id) {
+                if session.provider == AIProvider::Codex && session.provider_session_id.is_none() {
+                    session.provider_session_id = Some(thread_id);
+                    storage::save_data(&data).await?;
+                }
+            }
+        }
+    }
 
     if let Some(session_arc) = session_arc {
         let mut session = session_arc.lock().await;
@@ -352,6 +429,107 @@ async fn send_claude_message_impl(
     );
 
     Ok(())
+}
+
+async fn sync_codex_sessions_for_project(
+    project_id: &str,
+    project_path: &str,
+    codex_bin: &Option<String>,
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    let codex_threads =
+        codex_adapter::list_codex_threads(project_path.to_string(), codex_bin.clone()).await?;
+
+    let mut data = state.data.lock().await;
+    let mut changed = false;
+
+    for thread in codex_threads {
+        if !is_same_project_path(&thread.cwd, project_path) {
+            continue;
+        }
+
+        if let Some(existing) = data.sessions.iter_mut().find(|s| {
+            s.project_id == project_id
+                && s.provider == AIProvider::Codex
+                && s.provider_session_id.as_deref() == Some(thread.thread_id.as_str())
+        }) {
+            let updated_at = thread.updated_at_secs.saturating_mul(1000);
+            if existing.updated_at < updated_at {
+                existing.updated_at = updated_at;
+                changed = true;
+            }
+
+            if existing.name.trim().eq_ignore_ascii_case("Codex Session") {
+                let candidate = derive_codex_session_name(&thread.preview);
+                if existing.name != candidate {
+                    existing.name = candidate;
+                    changed = true;
+                }
+            }
+
+            continue;
+        }
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let created_at = if thread.created_at_secs > 0 {
+            thread.created_at_secs.saturating_mul(1000)
+        } else {
+            now
+        };
+        let updated_at = if thread.updated_at_secs > 0 {
+            thread.updated_at_secs.saturating_mul(1000)
+        } else {
+            created_at
+        };
+
+        data.sessions.push(Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project_id.to_string(),
+            name: derive_codex_session_name(&thread.preview),
+            provider: AIProvider::Codex,
+            created_at,
+            updated_at,
+            provider_session_id: Some(thread.thread_id),
+        });
+        changed = true;
+    }
+
+    if changed {
+        let snapshot = data.clone();
+        drop(data);
+        storage::save_data(&snapshot).await?;
+    }
+
+    Ok(())
+}
+
+fn derive_codex_session_name(preview: &str) -> String {
+    let first_line = preview
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Codex Session");
+
+    let mut truncated: String = first_line.chars().take(60).collect();
+    if first_line.chars().count() > 60 {
+        truncated.push('…');
+    }
+
+    if truncated.trim().is_empty() {
+        "Codex Session".to_string()
+    } else {
+        truncated
+    }
+}
+
+fn is_same_project_path(thread_cwd: &str, project_path: &str) -> bool {
+    let normalize = |s: &str| s.trim_end_matches('/').trim_end_matches('\\').to_string();
+    let thread = normalize(thread_cwd);
+    let project = normalize(project_path);
+    thread == project
+        || thread
+            .strip_prefix(&project)
+            .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
 }
 
 // ─── Settings Commands ───

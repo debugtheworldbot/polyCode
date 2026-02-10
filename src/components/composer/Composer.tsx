@@ -4,9 +4,10 @@ import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
 export function Composer() {
-  const { activeSessionId, isSending, sendMessage, stopSession } = useAppStore();
+  const { activeSessionId, sessions, isSending, sendMessage, stopSession } = useAppStore();
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -43,6 +44,10 @@ export function Composer() {
 
   if (!activeSessionId) return null;
 
+  const modelLabel = activeSession?.provider === 'claude' ? 'Claude Code' : 'GPT-5.3-Codex';
+  const statusLabel = isSending ? t('session.running') : t('session.idle');
+  const statusClassName = isSending ? 'running' : 'idle';
+
   return (
     <div className="composer-container">
       <div className="composer-box">
@@ -52,7 +57,7 @@ export function Composer() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask for follow-up changes"
+          placeholder={t('composer.placeholder')}
           rows={1}
           disabled={isSending}
         />
@@ -62,8 +67,12 @@ export function Composer() {
             <button className="icon-btn" title="Add Attachment">
               <Plus size={18} />
             </button>
-            <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
-              <span>GPT-5.3-Codex</span>
+            <button className="icon-btn model-btn" style={{ gap: '6px', paddingRight: '8px', fontSize: '12px' }}>
+              <span>{modelLabel}</span>
+              <span className={`model-status ${statusClassName}`}>
+                <span className="model-status-dot" />
+                <span>{statusLabel}</span>
+              </span>
               <ChevronDown size={12} />
             </button>
             <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
