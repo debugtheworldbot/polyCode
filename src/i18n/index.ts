@@ -27,6 +27,8 @@ const translations: Record<string, Record<string, string>> = {
     'composer.placeholder': 'Type your message...',
     'composer.send': 'Send',
     'composer.sending': 'Sending...',
+    'composer.addImage': 'Add images',
+    'composer.removeImage': 'Remove image',
 
     // Messages
     'messages.welcome': 'Start a conversation by typing a message below.',
@@ -97,6 +99,8 @@ const translations: Record<string, Record<string, string>> = {
     'composer.placeholder': '输入消息...',
     'composer.send': '发送',
     'composer.sending': '发送中...',
+    'composer.addImage': '添加图片',
+    'composer.removeImage': '移除图片',
 
     // Messages
     'messages.welcome': '在下方输入消息开始对话。',

@@ -802,6 +802,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
       void get().flushQueuedMessages(session_id);
 
+      // Save provider_session_id from Claude result for --resume and session sync
+      const providerSid = asString(data.session_id);
+      if (providerSid) {
+        const session = get().sessions.find((s) => s.id === session_id);
+        if (session && !session.provider_session_id) {
+          set((state) => ({
+            sessions: state.sessions.map((s) =>
+              s.id === session_id ? { ...s, provider_session_id: providerSid } : s
+            ),
+          }));
+          void api.saveProviderSessionId(session_id, providerSid);
+        }
+      }
+
       const result = asString(data.result) || '';
       if (result) {
         set((state) => {

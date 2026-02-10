@@ -88,6 +88,13 @@ export async function updateSettings(settings: AppSettings): Promise<void> {
   return invoke<void>('update_settings', { settings });
 }
 
+export async function saveProviderSessionId(
+  sessionId: string,
+  providerSessionId: string
+): Promise<void> {
+  return invoke<void>('save_provider_session_id', { sessionId, providerSessionId });
+}
+
 // ─── Utility Commands ───
 
 export async function checkCliAvailable(cliName: string): Promise<CLIStatus> {
@@ -100,6 +107,26 @@ export async function pickDirectory(): Promise<string | null> {
     return null;
   }
   return selection;
+}
+
+export async function pickImages(): Promise<string[]> {
+  const selection = await open({
+    multiple: true,
+    filters: [
+      {
+        name: 'Images',
+        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'],
+      },
+    ],
+  });
+
+  if (!selection) return [];
+  if (Array.isArray(selection)) return selection;
+  return [selection];
+}
+
+export async function savePastedImage(dataUrl: string): Promise<string> {
+  return invoke<string>('save_pasted_image', { dataUrl });
 }
 
 // ─── Event Listeners ───

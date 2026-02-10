@@ -51,6 +51,8 @@ pub fn run() {
             commands::check_cli_available,
             commands::stop_session,
             commands::get_all_sessions,
+            commands::save_provider_session_id,
+            commands::save_pasted_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

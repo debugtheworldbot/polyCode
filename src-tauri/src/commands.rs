@@ -1,4 +1,6 @@
+use base64::Engine;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, State};
@@ -115,6 +117,10 @@ pub async fn list_sessions(
         eprintln!("Failed to sync Codex sessions for project {}: {}", project_id, e);
     }
 
+    if let Err(e) = sync_claude_sessions_for_project(&project_id, &project_path, &state).await {
+        eprintln!("Failed to sync Claude sessions for project {}: {}", project_id, e);
+    }
+
     if let Err(e) = sync_gemini_sessions_for_project(&project_id, &project_path, &state).await {
         eprintln!("Failed to sync Gemini sessions for project {}: {}", project_id, e);
     }
@@ -139,6 +145,7 @@ pub async fn create_session(
     let ai_provider = match provider.as_str() {
         "codex" => AIProvider::Codex,
         "claude" => AIProvider::Claude,
+        "gemini" => AIProvider::Gemini,
         _ => return Err(format!("Unknown provider: {}", provider)),
     };
 
@@ -259,6 +266,40 @@ pub async fn get_messages(
         (session, project, data.settings.codex_bin.clone())
     };
 
+    if session.provider == AIProvider::Claude {
+        let Some(ref claude_sid) = session.provider_session_id else {
+            return Ok(local_messages);
+        };
+
+        let imported = match claude_adapter::read_claude_session_messages(
+            &project.path,
+            claude_sid,
+            &session_id,
+        )
+        .await
+        {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                eprintln!(
+                    "Failed to import Claude messages for session {} (falling back to local cache): {}",
+                    session_id, e
+                );
+                return Ok(local_messages);
+            }
+        };
+
+        if imported.is_empty() {
+            return Ok(local_messages);
+        }
+
+        if should_refresh_cached_messages(&local_messages, &imported) {
+            storage::save_messages(&session_id, &imported).await?;
+            return Ok(imported);
+        }
+
+        return Ok(local_messages);
+    }
+
     if session.provider != AIProvider::Codex {
         return Ok(local_messages);
     }
@@ -304,12 +345,18 @@ pub async fn send_message(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ChatMessage, String> {
+    let (text_content, local_image_paths) = extract_local_images_from_content(&content);
+    let display_content = build_display_content(&text_content, &local_image_paths);
+    if display_content.trim().is_empty() {
+        return Err("Message is empty".to_string());
+    }
+
     // Create user message
     let user_msg = ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
         session_id: session_id.clone(),
         role: MessageRole::User,
-        content: content.clone(),
+        content: display_content.clone(),
         message_type: MessageType::Text,
         created_at: chrono::Utc::now().timestamp_millis(),
     };
@@ -350,7 +397,8 @@ pub async fn send_message(
         AIProvider::Codex => {
             send_codex_message_impl(
                 &session_id,
-                &content,
+                &text_content,
+                &local_image_paths,
                 &project.path,
                 &settings.codex_bin,
                 session.model.as_deref(),
@@ -363,7 +411,7 @@ pub async fn send_message(
         AIProvider::Claude => {
             send_claude_message_impl(
                 &session_id,
-                &content,
+                &display_content,
                 &project.path,
                 &settings.claude_bin,
                 session.model.as_deref(),
@@ -390,7 +438,8 @@ pub async fn send_message(
 
 async fn send_codex_message_impl(
     session_id: &str,
-    content: &str,
+    text_content: &str,
+    local_image_paths: &[String],
     project_path: &str,
     codex_bin: &Option<String>,
     model: Option<&str>,
@@ -451,14 +500,30 @@ async fn send_codex_message_impl(
 
         if let Some(ref mut child) = session.child {
             if let Some(ref mut stdin) = child.stdin {
+                let mut input_items: Vec<Value> = Vec::new();
+                if !text_content.trim().is_empty() {
+                    input_items.push(json!({
+                        "type": "text",
+                        "text": text_content,
+                    }));
+                }
+                for path in local_image_paths {
+                    let trimmed = path.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    input_items.push(json!({
+                        "type": "localImage",
+                        "path": trimmed,
+                    }));
+                }
+                if input_items.is_empty() {
+                    return Err("Message is empty".to_string());
+                }
+
                 let mut turn_params = json!({
                     "threadId": thread_id,
-                    "input": [
-                        {
-                            "type": "text",
-                            "text": content,
-                        }
-                    ],
+                    "input": input_items,
                 });
 
                 if let Some(model_name) = model.and_then(|m| {
@@ -485,6 +550,60 @@ async fn send_codex_message_impl(
     }
 
     Ok(())
+}
+
+fn extract_local_images_from_content(content: &str) -> (String, Vec<String>) {
+    let mut text_lines: Vec<&str> = Vec::new();
+    let mut local_images: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(path) = extract_local_image_path(trimmed) {
+            local_images.push(path);
+        } else {
+            text_lines.push(line);
+        }
+    }
+
+    let text_content = text_lines.join("\n").trim().to_string();
+    let mut dedup = HashSet::new();
+    let deduped_images = local_images
+        .into_iter()
+        .filter(|path| dedup.insert(path.clone()))
+        .collect();
+
+    (text_content, deduped_images)
+}
+
+fn extract_local_image_path(line: &str) -> Option<String> {
+    if !(line.starts_with("[Image:") && line.ends_with(']')) {
+        return None;
+    }
+    let path = line
+        .trim_start_matches("[Image:")
+        .trim_end_matches(']')
+        .trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+fn build_display_content(text: &str, local_images: &[String]) -> String {
+    let image_lines = local_images
+        .iter()
+        .map(|path| format!("[Image: {}]", path))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if text.is_empty() {
+        image_lines
+    } else if image_lines.is_empty() {
+        text.to_string()
+    } else {
+        format!("{}\n\n{}", text, image_lines)
+    }
 }
 
 async fn send_claude_message_impl(
@@ -521,6 +640,85 @@ async fn send_claude_message_impl(
     );
 
     Ok(())
+}
+
+async fn sync_claude_sessions_for_project(
+    project_id: &str,
+    project_path: &str,
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    let claude_sessions = claude_adapter::list_claude_sessions(project_path).await;
+
+    let mut data = state.data.lock().await;
+    let mut changed = false;
+
+    for info in claude_sessions {
+        if let Some(existing) = data.sessions.iter_mut().find(|s| {
+            s.project_id == project_id
+                && s.provider == AIProvider::Claude
+                && s.provider_session_id.as_deref() == Some(info.session_id.as_str())
+        }) {
+            if existing.updated_at < info.updated_at_ms {
+                existing.updated_at = info.updated_at_ms;
+                changed = true;
+            }
+
+            if existing.name.trim().eq_ignore_ascii_case("Claude Session") && !info.preview.is_empty() {
+                let candidate = derive_claude_session_name(&info.preview);
+                if existing.name != candidate {
+                    existing.name = candidate;
+                    changed = true;
+                }
+            }
+
+            continue;
+        }
+
+        let session_name = if info.preview.is_empty() {
+            "Claude Session".to_string()
+        } else {
+            derive_claude_session_name(&info.preview)
+        };
+
+        data.sessions.push(Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id: project_id.to_string(),
+            name: session_name,
+            provider: AIProvider::Claude,
+            model: None,
+            created_at: info.created_at_ms,
+            updated_at: info.updated_at_ms,
+            provider_session_id: Some(info.session_id),
+        });
+        changed = true;
+    }
+
+    if changed {
+        let snapshot = data.clone();
+        drop(data);
+        storage::save_data(&snapshot).await?;
+    }
+
+    Ok(())
+}
+
+fn derive_claude_session_name(preview: &str) -> String {
+    let first_line = preview
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Claude Session");
+
+    let mut truncated: String = first_line.chars().take(60).collect();
+    if first_line.chars().count() > 60 {
+        truncated.push('…');
+    }
+
+    if truncated.trim().is_empty() {
+        "Claude Session".to_string()
+    } else {
+        truncated
+    }
 }
 
 async fn sync_codex_sessions_for_project(
@@ -674,6 +872,22 @@ fn should_refresh_cached_messages(local: &[ChatMessage], remote: &[ChatMessage])
     false
 }
 
+#[tauri::command]
+pub async fn save_provider_session_id(
+    session_id: String,
+    provider_session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut data = state.data.lock().await;
+    if let Some(session) = data.sessions.iter_mut().find(|s| s.id == session_id) {
+        if session.provider_session_id.is_none() {
+            session.provider_session_id = Some(provider_session_id);
+            storage::save_data(&data).await?;
+        }
+    }
+    Ok(())
+}
+
 // ─── Settings Commands ───
 
 #[tauri::command]
@@ -719,6 +933,49 @@ pub async fn check_cli_available(cli_name: String) -> Result<Value, String> {
             "available": false,
             "path": null,
         })),
+    }
+}
+
+#[tauri::command]
+pub async fn save_pasted_image(data_url: String) -> Result<String, String> {
+    let (header, encoded) = data_url
+        .split_once(',')
+        .ok_or("Invalid image data URL")?;
+    if !header.starts_with("data:image/") || !header.ends_with(";base64") {
+        return Err("Only base64 image data URLs are supported".to_string());
+    }
+
+    let mime = header
+        .trim_start_matches("data:")
+        .trim_end_matches(";base64");
+    let extension = image_extension_for_mime(mime);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|e| format!("Failed to decode image data: {}", e))?;
+
+    let dir = std::env::temp_dir().join("codex-hub-images");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("Failed to create image cache dir: {}", e))?;
+
+    let filename = format!("paste-{}.{}", uuid::Uuid::new_v4(), extension);
+    let path = dir.join(filename);
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|e| format!("Failed to save pasted image: {}", e))?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn image_extension_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/svg+xml" => "svg",
+        _ => "png",
     }
 }
 

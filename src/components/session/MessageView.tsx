@@ -1,14 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 import type { ChatMessage } from '../../types';
 
+function getFileName(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  const segments = normalized.split('/');
+  return segments[segments.length - 1] || 'image';
+}
+
+function renderLocalImagePlaceholders(content: string): string {
+  return content.replace(/^\[Image:\s*(.+?)\]\s*$/gm, (_match, rawPath: string) => {
+    const path = rawPath.trim();
+    if (!path) return '';
+    const src = convertFileSrc(path);
+    const fileName = getFileName(path);
+    return `![${fileName}](${src})`;
+  });
+}
+
 function MessageBubble({ message, provider }: { message: ChatMessage; provider?: string }) {
   const roleClass = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
   const isTool = message.message_type === 'tool';
+  const renderedContent = renderLocalImagePlaceholders(message.content);
 
   if (isTool) {
     return (
@@ -21,7 +39,7 @@ function MessageBubble({ message, provider }: { message: ChatMessage; provider?:
   return (
     <div className={`message-bubble ${roleClass} animate-fadeIn`} style={{ animationDelay: '0.1s' }}>
       <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{renderedContent}</ReactMarkdown>
       </div>
     </div>
   );
@@ -108,7 +126,11 @@ export function MessageView() {
           className="message-bubble user queued animate-fadeIn"
           style={{ animationDelay: `${0.06 * (index + 1)}s` }}
         >
-          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</div>
+          <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {renderLocalImagePlaceholders(content)}
+            </ReactMarkdown>
+          </div>
           <span className="queued-tag">queued</span>
         </div>
       ))}

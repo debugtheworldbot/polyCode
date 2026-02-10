@@ -1,10 +1,11 @@
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::storage;
-use crate::types::SessionEvent;
+use crate::types::{ChatMessage, MessageRole, MessageType, SessionEvent};
 
 /// Resolve the claude binary path
 fn resolve_claude_bin(custom: &Option<String>) -> String {
@@ -181,4 +182,202 @@ fn extract_claude_final_text(data: &Value) -> Option<String> {
     data.get("result")
         .and_then(|r| r.as_str())
         .map(|s| s.to_string())
+}
+
+// ─── Claude Code Session Sync ───
+
+/// Metadata about a Claude Code session discovered on disk.
+pub struct ClaudeSessionInfo {
+    pub session_id: String,
+    pub preview: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Convert a project path to the Claude Code projects directory hash.
+/// `/Users/tian/Developer/codex-hub` → `-Users-tian-Developer-codex-hub`
+fn project_path_to_hash(project_path: &str) -> String {
+    project_path.replace('/', "-").replace('\\', "-")
+}
+
+/// Get the Claude Code projects directory for a given project path.
+fn claude_sessions_dir(project_path: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let hash = project_path_to_hash(project_path);
+    let dir = home.join(".claude").join("projects").join(hash);
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// List all Claude Code sessions for a project path.
+pub async fn list_claude_sessions(project_path: &str) -> Vec<ClaudeSessionInfo> {
+    let dir = match claude_sessions_dir(project_path) {
+        Some(d) => d,
+        None => return vec![],
+    };
+
+    let mut sessions = Vec::new();
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let session_id = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+
+        // Quick parse: read first few and last few lines to get preview + timestamps
+        if let Some(info) = parse_claude_session_info(&path, &session_id).await {
+            sessions.push(info);
+        }
+    }
+
+    sessions
+}
+
+async fn parse_claude_session_info(path: &Path, session_id: &str) -> Option<ClaudeSessionInfo> {
+    let content = tokio::fs::read_to_string(path).await.ok()?;
+    let mut preview = String::new();
+    let mut first_ts: Option<i64> = None;
+    let mut last_ts: Option<i64> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let data: Value = serde_json::from_str(line).ok()?;
+        let entry_type = data.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        if entry_type != "user" && entry_type != "assistant" {
+            continue;
+        }
+
+        if let Some(ts) = parse_timestamp(&data) {
+            if first_ts.is_none() {
+                first_ts = Some(ts);
+            }
+            last_ts = Some(ts);
+        }
+
+        if preview.is_empty() && entry_type == "user" {
+            preview = extract_message_text(&data).unwrap_or_default();
+        }
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    Some(ClaudeSessionInfo {
+        session_id: session_id.to_string(),
+        preview,
+        created_at_ms: first_ts.unwrap_or(now),
+        updated_at_ms: last_ts.unwrap_or(now),
+    })
+}
+
+/// Read all messages from a Claude Code session JSONL file.
+pub async fn read_claude_session_messages(
+    project_path: &str,
+    claude_session_id: &str,
+    our_session_id: &str,
+) -> Result<Vec<ChatMessage>, String> {
+    let dir = claude_sessions_dir(project_path)
+        .ok_or_else(|| "Claude sessions directory not found".to_string())?;
+    let path = dir.join(format!("{}.jsonl", claude_session_id));
+
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read Claude session file: {}", e))?;
+
+    let mut messages = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let data: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let entry_type = match data.get("type").and_then(|t| t.as_str()) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let (role, message_type) = match entry_type {
+            "user" => (MessageRole::User, MessageType::Text),
+            "assistant" => (MessageRole::Assistant, MessageType::Text),
+            _ => continue,
+        };
+
+        let text = match extract_message_text(&data) {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => continue,
+        };
+
+        let ts = parse_timestamp(&data).unwrap_or(0);
+        let uuid = data
+            .get("uuid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        messages.push(ChatMessage {
+            id: if uuid.is_empty() {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                uuid
+            },
+            session_id: our_session_id.to_string(),
+            role,
+            content: text,
+            message_type,
+            created_at: ts,
+        });
+    }
+
+    Ok(messages)
+}
+
+fn parse_timestamp(data: &Value) -> Option<i64> {
+    let ts_str = data.get("timestamp").and_then(|v| v.as_str())?;
+    chrono::DateTime::parse_from_rfc3339(ts_str)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+fn extract_message_text(data: &Value) -> Option<String> {
+    let message = data.get("message")?;
+    let content = message.get("content")?;
+
+    if let Some(text) = content.as_str() {
+        return Some(text.to_string());
+    }
+
+    if let Some(arr) = content.as_array() {
+        let mut parts = Vec::new();
+        for item in arr {
+            if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    parts.push(text.to_string());
+                }
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+
+    None
 }

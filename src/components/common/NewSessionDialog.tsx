@@ -54,6 +54,17 @@ export function NewSessionDialog() {
               <p>{t('provider.claudeDesc')}</p>
             </div>
           </div>
+
+          <div
+            className={`provider-card ${selectedProvider === 'gemini' ? 'selected' : ''}`}
+            onClick={() => setSelectedProvider('gemini')}
+          >
+            <div className="provider-icon gemini" style={{ background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb' }}>★</div>
+            <div className="provider-info">
+              <h4>Gemini CLI</h4>
+              <p>Powered by Google Gemini CLI</p>
+            </div>
+          </div>
         </div>
 
         <div className="form-group">
@@ -62,7 +73,7 @@ export function NewSessionDialog() {
             className="form-input"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={`${selectedProvider === 'codex' ? 'Codex' : 'Claude'} Session`}
+            placeholder={`${selectedProvider === 'codex' ? 'Codex' : selectedProvider === 'gemini' ? 'Gemini' : 'Claude'} Session`}
           />
         </div>
 
