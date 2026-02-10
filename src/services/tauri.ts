@@ -8,6 +8,8 @@ import type {
   AppSettings,
   SessionEvent,
   CLIStatus,
+  GitStatusResponse,
+  GitFileDiffResponse,
 } from '../types';
 
 // ─── Project Commands ───
@@ -99,6 +101,33 @@ export async function saveProviderSessionId(
 
 export async function checkCliAvailable(cliName: string): Promise<CLIStatus> {
   return invoke<CLIStatus>('check_cli_available', { cliName });
+}
+
+export async function getGitStatus(projectId: string): Promise<GitStatusResponse> {
+  return invoke<GitStatusResponse>('get_git_status', { projectId });
+}
+
+export async function getGitFileDiff(
+  projectId: string,
+  filePath: string
+): Promise<GitFileDiffResponse> {
+  return invoke<GitFileDiffResponse>('get_git_file_diff', { projectId, filePath });
+}
+
+export async function stageGitFile(projectId: string, filePath: string): Promise<void> {
+  return invoke<void>('git_stage_file', { projectId, filePath });
+}
+
+export async function unstageGitFile(projectId: string, filePath: string): Promise<void> {
+  return invoke<void>('git_unstage_file', { projectId, filePath });
+}
+
+export async function discardGitFile(
+  projectId: string,
+  filePath: string,
+  untracked: boolean
+): Promise<void> {
+  return invoke<void>('git_discard_file', { projectId, filePath, untracked });
 }
 
 export async function pickDirectory(): Promise<string | null> {

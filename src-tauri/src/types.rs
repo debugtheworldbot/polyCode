@@ -66,6 +66,33 @@ pub struct AppSettings {
     pub language: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitFileStatus {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub staged: bool,
+    pub unstaged: bool,
+    pub untracked: bool,
+    pub conflicted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatusResponse {
+    pub is_git_repo: bool,
+    pub branch: Option<String>,
+    pub ahead: i32,
+    pub behind: i32,
+    pub files: Vec<GitFileStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitFileDiffResponse {
+    pub staged_patch: Option<String>,
+    pub unstaged_patch: Option<String>,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {

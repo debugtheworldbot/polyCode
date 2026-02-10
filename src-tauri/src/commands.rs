@@ -1,8 +1,9 @@
 use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::process::Output;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
@@ -910,6 +911,379 @@ pub async fn update_settings(
 }
 
 // ─── Utility Commands ───
+
+async fn resolve_project_path(project_id: &str, state: &State<'_, AppState>) -> Result<String, String> {
+    let data = state.data.lock().await;
+    data.projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .map(|p| p.path.clone())
+        .ok_or_else(|| "Project not found".to_string())
+}
+
+async fn run_git_command(project_path: &str, args: &[&str]) -> Result<Output, String> {
+    tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(project_path)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run git {}: {}", args.join(" "), e))
+}
+
+fn git_error_message(prefix: &str, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{}: {}", prefix, stderr)
+    }
+}
+
+fn decode_git_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+        return trimmed.to_string();
+    }
+
+    let mut out = String::new();
+    let mut chars = trimmed[1..trimmed.len() - 1].chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+
+    out
+}
+
+fn is_conflicted_status(index_status: char, worktree_status: char) -> bool {
+    matches!(
+        (index_status, worktree_status),
+        ('D', 'D')
+            | ('A', 'U')
+            | ('U', 'D')
+            | ('U', 'A')
+            | ('D', 'U')
+            | ('A', 'A')
+            | ('U', 'U')
+    )
+}
+
+fn parse_branch_header(line: &str) -> (Option<String>, i32, i32) {
+    let mut branch: Option<String> = None;
+    let mut ahead = 0;
+    let mut behind = 0;
+
+    let trimmed = line.trim_start_matches("## ").trim();
+    let (branch_part, tracking_part) = match trimmed.split_once(" [") {
+        Some((b, meta)) => (b.trim(), Some(meta.trim_end_matches(']').trim())),
+        None => (trimmed, None),
+    };
+
+    if let Some(name) = branch_part.strip_prefix("No commits yet on ") {
+        branch = Some(name.to_string());
+    } else if !branch_part.starts_with("HEAD ") && !branch_part.starts_with("HEAD(") {
+        branch = Some(
+            branch_part
+                .split("...")
+                .next()
+                .unwrap_or(branch_part)
+                .trim()
+                .to_string(),
+        );
+    }
+
+    if let Some(meta) = tracking_part {
+        for segment in meta.split(',') {
+            let token = segment.trim();
+            if let Some(value) = token.strip_prefix("ahead ") {
+                ahead = value.parse::<i32>().unwrap_or(0);
+            } else if let Some(value) = token.strip_prefix("behind ") {
+                behind = value.parse::<i32>().unwrap_or(0);
+            }
+        }
+    }
+
+    (branch, ahead, behind)
+}
+
+fn parse_git_status_line(line: &str) -> Option<GitFileStatus> {
+    if line.len() < 4 {
+        return None;
+    }
+
+    let mut chars = line.chars();
+    let index_status = chars.next()?;
+    let worktree_status = chars.next()?;
+    let _ = chars.next()?;
+
+    let path_field = line[3..].trim();
+    if path_field.is_empty() {
+        return None;
+    }
+
+    let (old_path, path) = match path_field.split_once(" -> ") {
+        Some((old, new)) => (Some(decode_git_path(old)), decode_git_path(new)),
+        None => (None, decode_git_path(path_field)),
+    };
+
+    let untracked = index_status == '?' && worktree_status == '?';
+    let staged = !untracked && index_status != ' ';
+    let unstaged = worktree_status != ' ';
+    let conflicted = is_conflicted_status(index_status, worktree_status);
+
+    Some(GitFileStatus {
+        path,
+        old_path,
+        index_status: index_status.to_string(),
+        worktree_status: worktree_status.to_string(),
+        staged,
+        unstaged,
+        untracked,
+        conflicted,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn git_null_device() -> &'static str {
+    "NUL"
+}
+
+#[cfg(not(target_os = "windows"))]
+fn git_null_device() -> &'static str {
+    "/dev/null"
+}
+
+#[tauri::command]
+pub async fn get_git_status(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<GitStatusResponse, String> {
+    let project_path = resolve_project_path(&project_id, &state).await?;
+
+    let repo_check = run_git_command(&project_path, &["rev-parse", "--is-inside-work-tree"]).await?;
+    if !repo_check.status.success() {
+        return Ok(GitStatusResponse {
+            is_git_repo: false,
+            branch: None,
+            ahead: 0,
+            behind: 0,
+            files: Vec::new(),
+        });
+    }
+
+    let inside = String::from_utf8_lossy(&repo_check.stdout).trim().to_string();
+    if inside != "true" {
+        return Ok(GitStatusResponse {
+            is_git_repo: false,
+            branch: None,
+            ahead: 0,
+            behind: 0,
+            files: Vec::new(),
+        });
+    }
+
+    let output = run_git_command(&project_path, &["status", "--porcelain", "--branch"]).await?;
+    if !output.status.success() {
+        return Err(git_error_message("Failed to read git status", &output));
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout);
+    let mut branch = None;
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut files = Vec::new();
+
+    for line in content.lines() {
+        if let Some(header) = line.strip_prefix("## ") {
+            let (parsed_branch, parsed_ahead, parsed_behind) =
+                parse_branch_header(&format!("## {}", header));
+            branch = parsed_branch;
+            ahead = parsed_ahead;
+            behind = parsed_behind;
+            continue;
+        }
+
+        if let Some(entry) = parse_git_status_line(line) {
+            files.push(entry);
+        }
+    }
+
+    Ok(GitStatusResponse {
+        is_git_repo: true,
+        branch,
+        ahead,
+        behind,
+        files,
+    })
+}
+
+#[tauri::command]
+pub async fn get_git_file_diff(
+    project_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<GitFileDiffResponse, String> {
+    let project_path = resolve_project_path(&project_id, &state).await?;
+    let file_arg = file_path.as_str();
+
+    let staged_output = run_git_command(&project_path, &["diff", "--cached", "--", file_arg]).await?;
+    if !staged_output.status.success() {
+        return Err(git_error_message("Failed to read staged diff", &staged_output));
+    }
+    let staged_text = String::from_utf8_lossy(&staged_output.stdout).to_string();
+    let staged_patch = if staged_text.trim().is_empty() {
+        None
+    } else {
+        Some(staged_text)
+    };
+
+    let unstaged_output = run_git_command(&project_path, &["diff", "--", file_arg]).await?;
+    if !unstaged_output.status.success() {
+        return Err(git_error_message("Failed to read unstaged diff", &unstaged_output));
+    }
+    let unstaged_text = String::from_utf8_lossy(&unstaged_output.stdout).to_string();
+    let mut unstaged_patch = if unstaged_text.trim().is_empty() {
+        None
+    } else {
+        Some(unstaged_text)
+    };
+
+    if unstaged_patch.is_none() {
+        let untracked_check = run_git_command(
+            &project_path,
+            &["ls-files", "--others", "--exclude-standard", "--", file_arg],
+        )
+        .await?;
+        if !untracked_check.status.success() {
+            return Err(git_error_message(
+                "Failed to inspect untracked files",
+                &untracked_check,
+            ));
+        }
+
+        if !String::from_utf8_lossy(&untracked_check.stdout).trim().is_empty() {
+            let untracked_output = run_git_command(
+                &project_path,
+                &["diff", "--no-index", "--", git_null_device(), file_arg],
+            )
+            .await?;
+            if !(untracked_output.status.success() || untracked_output.status.code() == Some(1)) {
+                return Err(git_error_message(
+                    "Failed to read untracked file diff",
+                    &untracked_output,
+                ));
+            }
+
+            let untracked_text = String::from_utf8_lossy(&untracked_output.stdout).to_string();
+            if !untracked_text.trim().is_empty() {
+                unstaged_patch = Some(untracked_text);
+            }
+        }
+    }
+
+    Ok(GitFileDiffResponse {
+        staged_patch,
+        unstaged_patch,
+    })
+}
+
+#[tauri::command]
+pub async fn git_stage_file(
+    project_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let project_path = resolve_project_path(&project_id, &state).await?;
+    let file_arg = file_path.as_str();
+    let output = run_git_command(&project_path, &["add", "--", file_arg]).await?;
+    if !output.status.success() {
+        return Err(git_error_message("Failed to stage file", &output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_unstage_file(
+    project_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let project_path = resolve_project_path(&project_id, &state).await?;
+    let file_arg = file_path.as_str();
+
+    let restore = run_git_command(&project_path, &["restore", "--staged", "--", file_arg]).await?;
+    if restore.status.success() {
+        return Ok(());
+    }
+
+    let reset = run_git_command(&project_path, &["reset", "HEAD", "--", file_arg]).await?;
+    if !reset.status.success() {
+        return Err(git_error_message("Failed to unstage file", &reset));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_discard_file(
+    project_id: String,
+    file_path: String,
+    untracked: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let project_path = resolve_project_path(&project_id, &state).await?;
+    let file_arg = file_path.as_str();
+
+    if untracked {
+        let clean = run_git_command(&project_path, &["clean", "-f", "--", file_arg]).await?;
+        if !clean.status.success() {
+            return Err(git_error_message("Failed to discard untracked file", &clean));
+        }
+        return Ok(());
+    }
+
+    let head_ref = format!("HEAD:{}", file_arg);
+    let tracked_in_head = run_git_command(&project_path, &["cat-file", "-e", head_ref.as_str()])
+        .await?
+        .status
+        .success();
+
+    if tracked_in_head {
+        let restore = run_git_command(
+            &project_path,
+            &["restore", "--source=HEAD", "--staged", "--worktree", "--", file_arg],
+        )
+        .await?;
+        if !restore.status.success() {
+            return Err(git_error_message("Failed to discard file changes", &restore));
+        }
+        return Ok(());
+    }
+
+    let rm_cached = run_git_command(&project_path, &["rm", "--cached", "-f", "--", file_arg]).await?;
+    if !rm_cached.status.success() {
+        return Err(git_error_message("Failed to discard newly added file", &rm_cached));
+    }
+
+    let clean = run_git_command(&project_path, &["clean", "-f", "--", file_arg]).await?;
+    if !clean.status.success() {
+        return Err(git_error_message("Failed to remove discarded file", &clean));
+    }
+
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn check_cli_available(cli_name: String) -> Result<Value, String> {

@@ -9,6 +9,7 @@ import { SettingsPanel } from './components/settings/SettingsPanel';
 import { applyTheme } from './components/settings/SettingsPanel';
 import { NewProjectDialog } from './components/common/NewProjectDialog';
 import { NewSessionDialog } from './components/common/NewSessionDialog';
+import { GitPanel } from './components/git/GitPanel';
 
 export default function App() {
   const { initialize, handleSessionEvent, settings } = useAppStore();
@@ -57,6 +58,7 @@ export default function App() {
         <MessageView />
         <Composer />
       </div>
+      <GitPanel />
       <SettingsPanel />
       <NewProjectDialog />
       <NewSessionDialog />

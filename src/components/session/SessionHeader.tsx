@@ -1,22 +1,43 @@
 import { FolderOpen, GitCommit, ChevronRight, Sidebar, MoreHorizontal } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../../store';
-import { t } from '../../i18n';
 import { getSessionModelLabel } from '../../constants/models';
 
 function handleDrag(e: React.MouseEvent) {
   if (e.button !== 0) return;
   // Don't drag when clicking interactive elements
-  const tag = (e.target as HTMLElement).closest('button, a, input, [role="button"]');
+  const target = e.target;
+  const tag =
+    target instanceof Element
+      ? target.closest('button, a, input, [role="button"]')
+      : null;
   if (tag) return;
   getCurrentWindow().startDragging();
 }
 
 export function SessionHeader() {
-  const { activeSessionId, sessions, activeProjectId, projects, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const {
+    activeSessionId,
+    sessions,
+    activeProjectId,
+    projects,
+    sidebarCollapsed,
+    showGitPanel,
+    toggleSidebar,
+    toggleGitPanel,
+  } = useAppStore();
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const activeProject = projects.find(p => p.id === activeProjectId);
+  const modelLabel = activeSession
+    ? getSessionModelLabel(activeSession.provider, activeSession.model)
+    : null;
+
+  const handleGitButtonClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleGitPanel();
+  };
 
   // When sidebar is collapsed, leave space for macOS traffic lights
   const trafficLightPad = sidebarCollapsed ? 78 : 0;
@@ -29,11 +50,21 @@ export function SessionHeader() {
             <Sidebar size={16} />
           </button>
         </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="header-btn"
+            style={showGitPanel ? { background: 'var(--color-sidebar-active)' } : undefined}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={handleGitButtonClick}
+          >
+            <GitCommit size={14} />
+            <span>Git</span>
+          </button>
+        </div>
       </div>
     );
   }
-
-  const modelLabel = getSessionModelLabel(activeSession.provider, activeSession.model);
 
   return (
     <div className="main-header" onMouseDown={handleDrag}>
@@ -59,9 +90,15 @@ export function SessionHeader() {
           <FolderOpen size={14} />
           <span>Open</span>
         </button>
-        <button className="header-btn">
+        <button
+          type="button"
+          className="header-btn"
+          style={showGitPanel ? { background: 'var(--color-sidebar-active)' } : undefined}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={handleGitButtonClick}
+        >
           <GitCommit size={14} />
-          <span>Commit</span>
+          <span>Git</span>
         </button>
         <div style={{ width: '1px', height: '20px', background: 'var(--color-divider)', margin: '0 4px' }} />
         <button className="header-btn" style={{ padding: '4px 6px' }}>

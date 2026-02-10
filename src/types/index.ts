@@ -48,5 +48,29 @@ export interface CLIStatus {
   path: string | null;
 }
 
+export interface GitFileStatus {
+  path: string;
+  old_path: string | null;
+  index_status: string;
+  worktree_status: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+}
+
+export interface GitStatusResponse {
+  is_git_repo: boolean;
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+}
+
+export interface GitFileDiffResponse {
+  staged_patch: string | null;
+  unstaged_patch: string | null;
+}
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type Language = 'en' | 'zh' | 'system';

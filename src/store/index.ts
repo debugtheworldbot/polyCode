@@ -368,6 +368,7 @@ interface AppStore {
   showNewProjectDialog: boolean;
   showNewSessionDialog: boolean;
   sidebarCollapsed: boolean;
+  showGitPanel: boolean;
 
   // ─── Actions ───
   initialize: () => Promise<void>;
@@ -402,6 +403,8 @@ interface AppStore {
   setShowNewProjectDialog: (show: boolean) => void;
   setShowNewSessionDialog: (show: boolean) => void;
   toggleSidebar: () => void;
+  setShowGitPanel: (show: boolean) => void;
+  toggleGitPanel: () => void;
 }
 
 function loadPersisted<T>(key: string, fallback: T): T {
@@ -441,6 +444,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   showNewProjectDialog: false,
   showNewSessionDialog: false,
   sidebarCollapsed: false,
+  showGitPanel: loadPersisted<boolean>('showGitPanel', true),
 
   // ─── Initialize ───
   initialize: async () => {
@@ -1003,4 +1007,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setShowNewProjectDialog: (show: boolean) => set({ showNewProjectDialog: show }),
   setShowNewSessionDialog: (show: boolean) => set({ showNewSessionDialog: show }),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+  setShowGitPanel: (show: boolean) => {
+    savePersisted('showGitPanel', show);
+    set({ showGitPanel: show });
+  },
+  toggleGitPanel: () => set((state) => {
+    const next = !state.showGitPanel;
+    savePersisted('showGitPanel', next);
+    return { showGitPanel: next };
+  }),
 }));
