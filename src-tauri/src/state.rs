@@ -8,7 +8,6 @@ use crate::types::{AppData, AppSettings};
 /// Represents an active provider process for a session
 pub struct ActiveSession {
     pub child: Option<Child>,
-    pub session_id: String,
     /// Codex app-server thread id (required by turn/start)
     pub codex_thread_id: Option<String>,
 }

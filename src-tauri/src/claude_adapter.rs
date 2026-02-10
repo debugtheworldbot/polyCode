@@ -150,30 +150,6 @@ pub async fn spawn_claude_session(
     Ok(child)
 }
 
-/// Parse a Claude Code JSON result to extract session_id
-pub fn extract_session_id(data: &Value) -> Option<String> {
-    data.get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Parse Claude Code stream events to extract text content
-pub fn extract_text_from_stream(data: &Value) -> Option<String> {
-    // stream_event with text_delta
-    if let Some(event) = data.get("event") {
-        if let Some(delta) = event.get("delta") {
-            if delta.get("type").and_then(|t| t.as_str()) == Some("text_delta") {
-                return delta.get("text").and_then(|t| t.as_str()).map(|s| s.to_string());
-            }
-        }
-    }
-    // result type
-    if data.get("type").and_then(|t| t.as_str()) == Some("result") {
-        return data.get("result").and_then(|r| r.as_str()).map(|s| s.to_string());
-    }
-    None
-}
-
 fn extract_claude_final_text(data: &Value) -> Option<String> {
     if data.get("type").and_then(|t| t.as_str()) != Some("result") {
         return None;

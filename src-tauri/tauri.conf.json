@@ -14,7 +14,7 @@
     "windows": [
       {
         "title": "CodexHub",
-        "titleBarStyle": "overlay",
+        "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "transparent": true,
         "width": 1200,

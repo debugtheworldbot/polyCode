@@ -466,7 +466,6 @@ async fn send_codex_message_impl(
             session_id.to_string(),
             Arc::new(Mutex::new(ActiveSession {
                 child: Some(child),
-                session_id: session_id.to_string(),
                 codex_thread_id: Some(codex_thread_id.clone()),
             })),
         );
@@ -634,7 +633,6 @@ async fn send_claude_message_impl(
         session_id.to_string(),
         Arc::new(Mutex::new(ActiveSession {
             child: Some(child),
-            session_id: session_id.to_string(),
             codex_thread_id: None,
         })),
     );
