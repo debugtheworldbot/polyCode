@@ -25,6 +25,10 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
 }
 
+function normalizeItemType(value: string): string {
+  return value.replace(/[_-]/g, '').toLowerCase();
+}
+
 function createMessage(sessionId: string, parsed: ParsedEventMessage): ChatMessage {
   return {
     id: crypto.randomUUID(),
@@ -121,8 +125,9 @@ function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
 
     const itemType = asString(item.type);
     if (!itemType) return null;
+    const normalizedType = normalizeItemType(itemType);
 
-    if (itemType === 'agentMessage') {
+    if (normalizedType === 'agentmessage') {
       const text = asString(item.text);
       if (!text) return null;
       return {
@@ -133,10 +138,13 @@ function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
       };
     }
 
-    if (itemType === 'commandExecution') {
-      const command = asString(item.command) || 'command';
-      const exitCode = asNumber(item.exitCode);
-      const durationMs = asNumber(item.durationMs);
+    if (normalizedType === 'commandexecution') {
+      const argv = Array.isArray(item.argv)
+        ? item.argv.filter((v): v is string => typeof v === 'string')
+        : [];
+      const command = asString(item.command) || (argv.length > 0 ? argv.join(' ') : 'command');
+      const exitCode = asNumber(item.exitCode) ?? asNumber(item.exit_code);
+      const durationMs = asNumber(item.durationMs) ?? asNumber(item.duration_ms);
       const status = asString(item.status);
       const details: string[] = [];
       if (exitCode !== null) details.push(`exit ${exitCode}`);
@@ -147,26 +155,49 @@ function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
         role: 'assistant',
         messageType: 'tool',
         content: details.length > 0
-          ? `[Command] ${command} (${details.join(', ')})`
-          : `[Command] ${command}`,
+          ? `Ran \`${command}\` (${details.join(', ')})`
+          : `Ran \`${command}\``,
         mode: 'new',
       };
     }
 
-    if (itemType === 'fileChange') {
-      const changes = Array.isArray(item.changes) ? item.changes.length : 0;
+    if (normalizedType === 'filechange') {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
       const status = asString(item.status);
+      const paths = changes
+        .map((change) => {
+          if (!isRecord(change)) return null;
+          return asString(change.path) || asString(change.filePath) || asString(change.file);
+        })
+        .filter((path): path is string => !!path && path.trim().length > 0);
+
+      let summary: string;
+      if (paths.length === 1) {
+        summary = `Edited \`${paths[0]}\``;
+      } else if (paths.length > 1) {
+        const shown = paths.slice(0, 2);
+        const remaining = paths.length - shown.length;
+        summary = remaining > 0
+          ? `Edited \`${shown.join('`, `')}\` +${remaining} files`
+          : `Edited \`${shown.join('`, `')}\``;
+      } else {
+        const count = changes.length;
+        summary = count > 0
+          ? `Edited ${count} file${count === 1 ? '' : 's'}`
+          : 'Edited files';
+      }
+
       return {
         role: 'assistant',
-        messageType: 'diff',
+        messageType: 'tool',
         content: status
-          ? `[Files] ${changes} change${changes === 1 ? '' : 's'} (${status})`
-          : `[Files] ${changes} change${changes === 1 ? '' : 's'}`,
+          ? `${summary} (${status})`
+          : summary,
         mode: 'new',
       };
     }
 
-    if (itemType === 'mcpToolCall') {
+    if (normalizedType === 'mcptoolcall') {
       const server = asString(item.server) || 'mcp';
       const tool = asString(item.tool) || 'tool';
       const status = asString(item.status) || 'completed';
@@ -393,6 +424,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   stopSession: async (sessionId: string) => {
     try {
       await api.stopSession(sessionId);
+      if (get().activeSessionId === sessionId) {
+        set({ isSending: false });
+      }
     } catch (e) {
       console.error('Failed to stop session:', e);
     }
@@ -419,7 +453,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await api.sendMessage(activeSessionId, content);
     } catch (e) {
       console.error('Failed to send message:', e);
-    } finally {
       set({ isSending: false });
     }
   },
@@ -453,6 +486,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (event_type === 'codex_message') {
+      const method = asString((data as JsonRecord).method);
+      if (method === 'turn/completed' && session_id === get().activeSessionId) {
+        set({ isSending: false });
+      }
+
       const parsed = parseCodexEvent(data);
       if (!parsed) return;
 
@@ -485,6 +523,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle Claude result (final message)
     if (event_type === 'claude_result') {
+      if (session_id === get().activeSessionId) {
+        set({ isSending: false });
+      }
+
       const result = asString(data.result) || '';
       if (result) {
         set((state) => {
@@ -506,6 +548,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle errors
     if (event_type === 'codex_error' || event_type === 'claude_error') {
+      if (session_id === get().activeSessionId) {
+        set({ isSending: false });
+      }
+
       const errorMsg = asString(data.message) || 'Unknown error';
       set((state) => {
         const existing = state.messages[session_id] || [];
