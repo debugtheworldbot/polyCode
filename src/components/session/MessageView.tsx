@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -28,15 +28,41 @@ function MessageBubble({ message, provider }: { message: ChatMessage; provider?:
 }
 
 export function MessageView() {
-  const { activeSessionId, sessions, messages, isSending } = useAppStore();
+  const {
+    activeSessionId,
+    sessions,
+    messages,
+    queuedMessages,
+    liveStatusBySession,
+    activeTurnStartedAt,
+    isSending,
+  } = useAppStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [now, setNow] = useState(Date.now());
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const currentMessages = activeSessionId ? messages[activeSessionId] || [] : [];
+  const queuedItems = activeSessionId ? (queuedMessages[activeSessionId] || []) : [];
+  const queuedCount = activeSessionId ? (queuedMessages[activeSessionId]?.length || 0) : 0;
+  const liveStatus = activeSessionId ? liveStatusBySession[activeSessionId] : '';
+  const turnStartedAt = activeSessionId ? activeTurnStartedAt[activeSessionId] : undefined;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentMessages, isSending]);
+  }, [currentMessages, queuedItems, isSending]);
+
+  useEffect(() => {
+    if (!isSending) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isSending]);
+
+  const elapsedSeconds = turnStartedAt
+    ? Math.max(0, Math.floor((now - turnStartedAt) / 1000))
+    : 0;
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  const elapsedLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 
   if (!activeSessionId || !activeSession) {
     return (
@@ -49,7 +75,7 @@ export function MessageView() {
 
   return (
     <div className="messages-area">
-      {currentMessages.length === 0 && (
+      {currentMessages.length === 0 && queuedCount === 0 && (
         <div className="empty-state" style={{ flex: 1 }}>
           <div style={{
             width: '64px',
@@ -76,9 +102,20 @@ export function MessageView() {
         <MessageBubble key={msg.id} message={msg} provider={activeSession.provider} />
       ))}
 
+      {queuedItems.map((content, index) => (
+        <div
+          key={`queued-${index}-${content}`}
+          className="message-bubble user queued animate-fadeIn"
+          style={{ animationDelay: `${0.06 * (index + 1)}s` }}
+        >
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</div>
+          <span className="queued-tag">queued</span>
+        </div>
+      ))}
+
       {isSending && (
         <div className="message-bubble assistant animate-fadeIn" style={{ opacity: 0.72, fontStyle: 'italic' }}>
-          thinking...
+          {(liveStatus || 'Thinking')}{` (${elapsedLabel} • esc to interrupt${queuedCount > 0 ? ` • ${queuedCount} queued` : ''})`}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Plus, MoreHorizontal, Pencil, Trash2, Square } from 'lucide-react';
+import { MessageCircle, Plus, MoreHorizontal, Pencil, Trash2, Square, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
@@ -11,6 +11,8 @@ export function SessionList() {
     removeSession,
     renameSession,
     stopSession,
+    refreshSession,
+    refreshingSessions,
     setShowNewSessionDialog,
   } = useAppStore();
 
@@ -119,6 +121,20 @@ export function SessionList() {
               session.name
             )}
           </div>
+          <button
+            className="session-refresh-btn"
+            title="Refresh session"
+            disabled={!!refreshingSessions[session.id]}
+            onClick={(e) => {
+              e.stopPropagation();
+              void refreshSession(session.id);
+            }}
+          >
+            <RefreshCw
+              size={12}
+              className={refreshingSessions[session.id] ? 'session-refresh-icon spinning' : 'session-refresh-icon'}
+            />
+          </button>
         </div>
       ))}
 

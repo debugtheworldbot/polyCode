@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square, Plus, Mic, ChevronDown } from 'lucide-react';
+import { Square, Plus, Mic, ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
 export function Composer() {
-  const { activeSessionId, sessions, isSending, sendMessage, stopSession } = useAppStore();
+  const { activeSessionId, sessions, queuedMessages, isSending, sendMessage, stopSession } = useAppStore();
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -23,7 +23,7 @@ export function Composer() {
   }, [activeSessionId]);
 
   const handleSend = async () => {
-    if (!input.trim() || isSending || !activeSessionId) return;
+    if (!input.trim() || !activeSessionId) return;
     const msg = input;
     setInput('');
     await sendMessage(msg);
@@ -45,7 +45,12 @@ export function Composer() {
   if (!activeSessionId) return null;
 
   const modelLabel = activeSession?.provider === 'claude' ? 'Claude Code' : 'GPT-5.3-Codex';
-  const statusLabel = isSending ? t('session.running') : t('session.idle');
+  const queuedCount = queuedMessages[activeSessionId]?.length || 0;
+  const statusLabel = isSending
+    ? queuedCount > 0
+      ? `${t('session.running')} · ${queuedCount} queued`
+      : t('session.running')
+    : t('session.idle');
   const statusClassName = isSending ? 'running' : 'idle';
 
   return (
@@ -59,7 +64,6 @@ export function Composer() {
           onKeyDown={handleKeyDown}
           placeholder={t('composer.placeholder')}
           rows={1}
-          disabled={isSending}
         />
         
         <div className="composer-footer">
@@ -85,27 +89,26 @@ export function Composer() {
              <button className="icon-btn">
                <Mic size={18} />
              </button>
-            {isSending ? (
+            {isSending && (
               <button
-                className="send-btn"
+                className="icon-btn"
                 onClick={handleStop}
                 title={t('session.stop')}
               >
-                <Square size={10} fill="currentColor" />
-              </button>
-            ) : (
-              <button
-                className="send-btn"
-                onClick={handleSend}
-                disabled={!input.trim()}
-                title={t('composer.send')}
-              >
-                <div style={{ transform: 'rotate(-90deg) translateX(1px)' }}>
-                   <div style={{ borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '8px solid currentColor', width: 0, height: 0, margin: '0 auto' }}></div>
-                   <div style={{ width: '2px', height: '8px', background: 'currentColor', margin: '-1px auto 0' }}></div>
-                </div>
+                <Square size={14} />
               </button>
             )}
+            <button
+              className="send-btn"
+              onClick={handleSend}
+              disabled={!input.trim()}
+              title={isSending ? 'Queue message' : t('composer.send')}
+            >
+              <div style={{ transform: 'rotate(-90deg) translateX(1px)' }}>
+                 <div style={{ borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '8px solid currentColor', width: 0, height: 0, margin: '0 auto' }}></div>
+                 <div style={{ width: '2px', height: '8px', background: 'currentColor', margin: '-1px auto 0' }}></div>
+              </div>
+            </button>
           </div>
         </div>
       </div>

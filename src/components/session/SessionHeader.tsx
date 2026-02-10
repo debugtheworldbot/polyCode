@@ -3,15 +3,18 @@ import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
 export function SessionHeader() {
-  const { activeSessionId, sessions, activeProjectId, projects, toggleSidebar } = useAppStore();
+  const { activeSessionId, sessions, activeProjectId, projects, sidebarCollapsed, toggleSidebar } = useAppStore();
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const activeProject = projects.find(p => p.id === activeProjectId);
 
+  // When sidebar is collapsed, leave space for macOS traffic lights
+  const trafficLightPad = sidebarCollapsed ? 78 : 0;
+
   if (!activeSession) {
     return (
       <div className="main-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: trafficLightPad }}>
           <button className="header-btn" onClick={toggleSidebar} style={{ border: 'none', padding: '4px' }}>
             <Sidebar size={16} />
           </button>
@@ -22,7 +25,7 @@ export function SessionHeader() {
 
   return (
     <div className="main-header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: trafficLightPad }}>
         <button className="header-btn" onClick={toggleSidebar} style={{ border: 'none', padding: '4px', marginRight: '4px' }}>
           <Sidebar size={16} />
         </button>

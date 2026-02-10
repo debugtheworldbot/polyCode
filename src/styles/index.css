@@ -72,7 +72,7 @@ body {
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  padding-top: 12px;
+  padding-top: 40px; /* space for macOS traffic lights */
   transition: width 0.2s ease;
 }
 
@@ -126,6 +126,49 @@ body {
   height: 15px;
 }
 
+.session-refresh-btn {
+  margin-left: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-item:hover .session-refresh-btn {
+  opacity: 0.95;
+  pointer-events: auto;
+}
+
+.session-refresh-btn:hover {
+  background: var(--color-sidebar-hover);
+  color: var(--color-text);
+  opacity: 1;
+}
+
+.session-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-refresh-icon.spinning {
+  animation: codexhub-spin 1s linear infinite;
+}
+
+@keyframes codexhub-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding: 10px;
@@ -150,6 +193,13 @@ body {
   justify-content: space-between;
   border-bottom: 1px solid var(--color-divider);
   flex-shrink: 0;
+  -webkit-app-region: drag; /* allow window drag */
+}
+
+.main-header button,
+.main-header a,
+.main-header .header-actions {
+  -webkit-app-region: no-drag; /* buttons remain clickable */
 }
 
 .breadcrumb {
@@ -206,6 +256,25 @@ body {
   max-width: 70%;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.message-bubble.user.queued {
+  background: color-mix(in srgb, var(--color-user-bubble) 72%, transparent);
+  color: color-mix(in srgb, var(--color-user-text) 78%, var(--color-text-secondary) 22%);
+  border: 1px dashed color-mix(in srgb, var(--color-border) 78%, transparent);
+  position: relative;
+}
+
+.queued-tag {
+  display: inline-flex;
+  margin-top: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
 }
 
 /* Assistant Message: Clean Text, Left Aligned */

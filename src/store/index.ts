@@ -29,6 +29,98 @@ function normalizeItemType(value: string): string {
   return value.replace(/[_-]/g, '').toLowerCase();
 }
 
+function firstNonEmptyString(values: Array<unknown>): string | null {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function compactText(value: string, max = 120): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
+function parseCodexLiveStatus(data: JsonRecord): string | null | undefined {
+  const method = asString(data.method);
+  if (!method) return undefined;
+
+  const params = isRecord(data.params) ? data.params : null;
+
+  if (method === 'turn/completed') return null;
+  if (method === 'turn/started') return 'Thinking';
+  if (method === 'error') return 'Error';
+
+  const turnLike = method.startsWith('turn/');
+  if (turnLike && params) {
+    const direct = firstNonEmptyString([
+      params.title,
+      params.statusText,
+      params.status_text,
+      params.message,
+      params.summary,
+      params.status,
+    ]);
+    if (direct) return compactText(direct);
+  }
+
+  if (!params) return undefined;
+  if (method !== 'item/started' && method !== 'item/updated' && method !== 'item/in_progress') {
+    return undefined;
+  }
+
+  const item = isRecord(params.item) ? params.item : null;
+  if (!item) return undefined;
+
+  const explicit = firstNonEmptyString([
+    item.title,
+    item.statusText,
+    item.status_text,
+    item.message,
+    item.description,
+    item.summary,
+    params.title,
+    params.statusText,
+    params.status_text,
+    params.message,
+  ]);
+  if (explicit) return compactText(explicit);
+
+  const itemType = asString(item.type);
+  if (!itemType) return 'Thinking';
+
+  const normalizedType = normalizeItemType(itemType);
+  if (normalizedType === 'commandexecution') {
+    const argv = Array.isArray(item.argv)
+      ? item.argv.filter((v): v is string => typeof v === 'string')
+      : [];
+    const command = asString(item.command) || (argv.length > 0 ? argv.join(' ') : null);
+    if (command) return compactText(`Running ${command}`);
+    return 'Running command';
+  }
+
+  if (normalizedType === 'filechange') {
+    return 'Editing files';
+  }
+
+  if (normalizedType === 'mcptoolcall') {
+    const server = asString(item.server);
+    const tool = asString(item.tool);
+    if (server && tool) return `Using ${server}/${tool}`;
+    if (tool) return `Using ${tool}`;
+    return 'Using MCP tool';
+  }
+
+  if (normalizedType === 'agentmessage') {
+    return 'Writing response';
+  }
+
+  return 'Thinking';
+}
+
 function createMessage(sessionId: string, parsed: ParsedEventMessage): ChatMessage {
   return {
     id: crypto.randomUUID(),
@@ -247,6 +339,10 @@ interface AppStore {
   activeProjectId: string | null;
   activeSessionId: string | null;
   messages: Record<string, ChatMessage[]>;
+  queuedMessages: Record<string, string[]>;
+  refreshingSessions: Record<string, boolean>;
+  liveStatusBySession: Record<string, string>;
+  activeTurnStartedAt: Record<string, number>;
   settings: AppSettings;
   isSending: boolean;
   showSettings: boolean;
@@ -270,6 +366,9 @@ interface AppStore {
   stopSession: (sessionId: string) => Promise<void>;
 
   loadMessages: (sessionId: string) => Promise<void>;
+  refreshSession: (sessionId: string) => Promise<void>;
+  sendMessageToSession: (sessionId: string, content: string) => Promise<void>;
+  flushQueuedMessages: (sessionId: string) => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
   handleSessionEvent: (event: SessionEvent) => void;
 
@@ -289,6 +388,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeProjectId: null,
   activeSessionId: null,
   messages: {},
+  queuedMessages: {},
+  refreshingSessions: {},
+  liveStatusBySession: {},
+  activeTurnStartedAt: {},
   settings: {
     codex_bin: null,
     claude_bin: null,
@@ -315,7 +418,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadProjects: async () => {
     try {
       const projects = await api.listProjects();
-      set({ projects });
+      const currentActive = get().activeProjectId;
+      const hasCurrentActive = currentActive
+        ? projects.some((project) => project.id === currentActive)
+        : false;
+      const nextActiveProjectId = hasCurrentActive
+        ? currentActive
+        : (projects[0]?.id ?? null);
+
+      set({
+        projects,
+        activeProjectId: nextActiveProjectId,
+        activeSessionId: null,
+        sessions: [],
+      });
+
+      if (nextActiveProjectId) {
+        await get().loadSessions(nextActiveProjectId);
+      }
     } catch (e) {
       console.error('Failed to load projects:', e);
     }
@@ -424,9 +544,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   stopSession: async (sessionId: string) => {
     try {
       await api.stopSession(sessionId);
-      if (get().activeSessionId === sessionId) {
-        set({ isSending: false });
-      }
+    set({ isSending: false });
+    set((state) => {
+      const nextStatus = { ...state.liveStatusBySession };
+      const nextStart = { ...state.activeTurnStartedAt };
+      delete nextStatus[sessionId];
+      delete nextStart[sessionId];
+      return {
+        liveStatusBySession: nextStatus,
+        activeTurnStartedAt: nextStart,
+      };
+    });
+    void get().flushQueuedMessages(sessionId);
     } catch (e) {
       console.error('Failed to stop session:', e);
     }
@@ -444,17 +573,104 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string) => {
-    const { activeSessionId } = get();
-    if (!activeSessionId || !content.trim()) return;
+  refreshSession: async (sessionId: string) => {
+    const session = get().sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+
+    set((state) => ({
+      refreshingSessions: {
+        ...state.refreshingSessions,
+        [sessionId]: true,
+      },
+    }));
+
+    try {
+      await get().loadSessions(session.project_id);
+      const messages = await api.getMessages(sessionId);
+      set((state) => ({
+        messages: { ...state.messages, [sessionId]: messages },
+      }));
+    } catch (e) {
+      console.error('Failed to refresh session:', e);
+    } finally {
+      set((state) => {
+        const next = { ...state.refreshingSessions };
+        delete next[sessionId];
+        return { refreshingSessions: next };
+      });
+    }
+  },
+
+  sendMessageToSession: async (sessionId: string, content: string) => {
+    const trimmed = content.trim();
+    if (!sessionId || !trimmed) return;
+
+    if (get().isSending) {
+      set((state) => {
+        const existing = state.queuedMessages[sessionId] || [];
+        return {
+          queuedMessages: {
+            ...state.queuedMessages,
+            [sessionId]: [...existing, trimmed],
+          },
+        };
+      });
+      return;
+    }
 
     set({ isSending: true });
+    set((state) => ({
+      liveStatusBySession: {
+        ...state.liveStatusBySession,
+        [sessionId]: 'Thinking',
+      },
+      activeTurnStartedAt: {
+        ...state.activeTurnStartedAt,
+        [sessionId]: Date.now(),
+      },
+    }));
     try {
-      await api.sendMessage(activeSessionId, content);
+      await api.sendMessage(sessionId, trimmed);
     } catch (e) {
       console.error('Failed to send message:', e);
       set({ isSending: false });
+      set((state) => {
+        const nextStatus = { ...state.liveStatusBySession };
+        const nextStart = { ...state.activeTurnStartedAt };
+        delete nextStatus[sessionId];
+        delete nextStart[sessionId];
+        return {
+          liveStatusBySession: nextStatus,
+          activeTurnStartedAt: nextStart,
+        };
+      });
     }
+  },
+
+  flushQueuedMessages: async (sessionId: string) => {
+    if (!sessionId || get().isSending) return;
+
+    const queue = get().queuedMessages[sessionId] || [];
+    if (queue.length === 0) return;
+
+    const [next, ...rest] = queue;
+    set((state) => {
+      const updated = { ...state.queuedMessages };
+      if (rest.length > 0) {
+        updated[sessionId] = rest;
+      } else {
+        delete updated[sessionId];
+      }
+      return { queuedMessages: updated };
+    });
+
+    await get().sendMessageToSession(sessionId, next);
+  },
+
+  sendMessage: async (content: string) => {
+    const { activeSessionId } = get();
+    if (!activeSessionId) return;
+    await get().sendMessageToSession(activeSessionId, content);
   },
 
   handleSessionEvent: (event: SessionEvent) => {
@@ -487,8 +703,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     if (event_type === 'codex_message') {
       const method = asString((data as JsonRecord).method);
-      if (method === 'turn/completed' && session_id === get().activeSessionId) {
+      if (method === 'turn/completed') {
         set({ isSending: false });
+        set((state) => {
+          const nextStatus = { ...state.liveStatusBySession };
+          const nextStart = { ...state.activeTurnStartedAt };
+          delete nextStatus[session_id];
+          delete nextStart[session_id];
+          return {
+            liveStatusBySession: nextStatus,
+            activeTurnStartedAt: nextStart,
+          };
+        });
+        void get().flushQueuedMessages(session_id);
+      }
+
+      const status = parseCodexLiveStatus(data);
+      if (typeof status === 'string' && status.trim()) {
+        set((state) => ({
+          liveStatusBySession: {
+            ...state.liveStatusBySession,
+            [session_id]: status,
+          },
+        }));
+      } else if (status === null) {
+        set((state) => {
+          const nextStatus = { ...state.liveStatusBySession };
+          delete nextStatus[session_id];
+          return { liveStatusBySession: nextStatus };
+        });
       }
 
       const parsed = parseCodexEvent(data);
@@ -504,6 +747,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (event_type === 'claude_stream') {
+      set((state) => ({
+        liveStatusBySession: {
+          ...state.liveStatusBySession,
+          [session_id]: 'Thinking',
+        },
+      }));
+
       const delta = parseClaudeDelta(data);
       if (!delta) return;
 
@@ -523,9 +773,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle Claude result (final message)
     if (event_type === 'claude_result') {
-      if (session_id === get().activeSessionId) {
-        set({ isSending: false });
-      }
+      set({ isSending: false });
+      set((state) => {
+        const nextStatus = { ...state.liveStatusBySession };
+        const nextStart = { ...state.activeTurnStartedAt };
+        delete nextStatus[session_id];
+        delete nextStart[session_id];
+        return {
+          liveStatusBySession: nextStatus,
+          activeTurnStartedAt: nextStart,
+        };
+      });
+      void get().flushQueuedMessages(session_id);
 
       const result = asString(data.result) || '';
       if (result) {
@@ -548,9 +807,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle errors
     if (event_type === 'codex_error' || event_type === 'claude_error') {
-      if (session_id === get().activeSessionId) {
-        set({ isSending: false });
-      }
+      set({ isSending: false });
+      set((state) => {
+        const nextStatus = { ...state.liveStatusBySession };
+        const nextStart = { ...state.activeTurnStartedAt };
+        delete nextStatus[session_id];
+        delete nextStart[session_id];
+        return {
+          liveStatusBySession: nextStatus,
+          activeTurnStartedAt: nextStart,
+        };
+      });
+      void get().flushQueuedMessages(session_id);
 
       const errorMsg = asString(data.message) || 'Unknown error';
       set((state) => {

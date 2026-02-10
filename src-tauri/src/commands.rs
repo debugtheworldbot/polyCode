@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 
@@ -13,6 +14,27 @@ use crate::types::*;
 
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
+    let (projects_snapshot, codex_bin) = {
+        let data = state.data.lock().await;
+        (data.projects.clone(), data.settings.codex_bin.clone())
+    };
+
+    for project in &projects_snapshot {
+        if let Err(e) = sync_codex_sessions_for_project(
+            &project.id,
+            &project.path,
+            &codex_bin,
+            &state,
+        )
+        .await
+        {
+            eprintln!(
+                "Failed to sync Codex sessions for project {} while listing projects: {}",
+                project.id, e
+            );
+        }
+    }
+
     let data = state.data.lock().await;
     Ok(data.projects.clone())
 }
@@ -184,9 +206,6 @@ pub async fn get_messages(
     state: State<'_, AppState>,
 ) -> Result<Vec<ChatMessage>, String> {
     let local_messages = storage::load_messages(&session_id).await;
-    if !local_messages.is_empty() {
-        return Ok(local_messages);
-    }
 
     let (session, project, codex_bin) = {
         let data = state.data.lock().await;
@@ -213,20 +232,34 @@ pub async fn get_messages(
         return Ok(local_messages);
     };
 
-    let imported_messages = codex_adapter::read_codex_thread_messages(
+    let imported_messages = match codex_adapter::read_codex_thread_messages(
         project.path.clone(),
         codex_bin,
         thread_id,
         session_id.clone(),
     )
-    .await?;
+    .await
+    {
+        Ok(messages) => messages,
+        Err(e) => {
+            eprintln!(
+                "Failed to import Codex messages for session {} (falling back to local cache): {}",
+                session_id, e
+            );
+            return Ok(local_messages);
+        }
+    };
 
     if imported_messages.is_empty() {
         return Ok(local_messages);
     }
 
-    storage::save_messages(&session_id, &imported_messages).await?;
-    Ok(imported_messages)
+    if should_refresh_cached_messages(&local_messages, &imported_messages) {
+        storage::save_messages(&session_id, &imported_messages).await?;
+        return Ok(imported_messages);
+    }
+
+    Ok(local_messages)
 }
 
 #[tauri::command]
@@ -523,13 +556,62 @@ fn derive_codex_session_name(preview: &str) -> String {
 }
 
 fn is_same_project_path(thread_cwd: &str, project_path: &str) -> bool {
-    let normalize = |s: &str| s.trim_end_matches('/').trim_end_matches('\\').to_string();
-    let thread = normalize(thread_cwd);
-    let project = normalize(project_path);
-    thread == project
-        || thread
-            .strip_prefix(&project)
-            .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
+    fn canonicalize_path(path: &str) -> Option<PathBuf> {
+        if path.trim().is_empty() {
+            return None;
+        }
+        std::fs::canonicalize(path).ok()
+    }
+
+    fn normalize_lossy(path: &str) -> String {
+        path.replace('\\', "/").trim_end_matches('/').to_string()
+    }
+
+    let thread_canon = canonicalize_path(thread_cwd);
+    let project_canon = canonicalize_path(project_path);
+    if let (Some(thread), Some(project)) = (thread_canon, project_canon) {
+        return thread == project || thread.starts_with(&project);
+    }
+
+    let thread = normalize_lossy(thread_cwd);
+    let project = normalize_lossy(project_path);
+    if thread.is_empty() || project.is_empty() {
+        return false;
+    }
+
+    if thread == project {
+        return true;
+    }
+
+    Path::new(&thread).starts_with(Path::new(&project))
+}
+
+fn should_refresh_cached_messages(local: &[ChatMessage], remote: &[ChatMessage]) -> bool {
+    if local.is_empty() {
+        return true;
+    }
+
+    if local.len() != remote.len() {
+        return true;
+    }
+
+    for (cached, latest) in local.iter().zip(remote.iter()) {
+        if std::mem::discriminant(&cached.role) != std::mem::discriminant(&latest.role) {
+            return true;
+        }
+
+        if std::mem::discriminant(&cached.message_type)
+            != std::mem::discriminant(&latest.message_type)
+        {
+            return true;
+        }
+
+        if cached.content.trim() != latest.content.trim() {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ─── Settings Commands ───

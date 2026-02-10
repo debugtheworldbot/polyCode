@@ -11,6 +11,12 @@ use crate::types::{AIProvider, ChatMessage, MessageRole, MessageType, SessionEve
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+fn should_ignore_codex_stderr(line: &str) -> bool {
+    let normalized = line.to_ascii_lowercase();
+    normalized.contains("state db missing rollout path for thread")
+        || normalized.contains("falling back on rollout system")
+}
+
 #[derive(Debug, Clone)]
 pub struct CodexThreadSummary {
     pub thread_id: String,
@@ -69,6 +75,9 @@ pub async fn spawn_codex_session(
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
             if line.trim().is_empty() {
+                continue;
+            }
+            if should_ignore_codex_stderr(&line) {
                 continue;
             }
             let event = SessionEvent {
@@ -286,23 +295,47 @@ pub async fn list_codex_threads(
     project_path: String,
     codex_bin: Option<String>,
 ) -> Result<Vec<CodexThreadSummary>, String> {
-    let result = run_codex_request(
-        project_path,
-        codex_bin,
+    let primary = run_codex_request(
+        project_path.clone(),
+        codex_bin.clone(),
         "thread/list",
         json!({
             "limit": 200,
             "sortKey": "updated_at",
             "archived": false,
-            "modelProviders": ["openai"],
         }),
     )
-    .await?;
+    .await;
 
-    let data = result
-        .get("data")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("Invalid thread/list response: {}", result))?;
+    let result = match primary {
+        Ok(result) => result,
+        Err(primary_err) => {
+            // Fallback for CLI/server versions that reject some list filters.
+            run_codex_request(
+                project_path,
+                codex_bin,
+                "thread/list",
+                json!({
+                    "limit": 200,
+                }),
+            )
+            .await
+            .map_err(|fallback_err| {
+                format!(
+                    "thread/list failed (primary: {}; fallback: {})",
+                    primary_err, fallback_err
+                )
+            })?
+        }
+    };
+
+    let data = if let Some(arr) = result.get("data").and_then(|v| v.as_array()) {
+        arr
+    } else if let Some(arr) = result.get("threads").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        return Err(format!("Invalid thread/list response: {}", result));
+    };
 
     let mut threads = Vec::with_capacity(data.len());
     for thread in data {
@@ -313,6 +346,8 @@ pub async fn list_codex_threads(
 
         let cwd = thread
             .get("cwd")
+            .or_else(|| thread.get("projectPath"))
+            .or_else(|| thread.get("project_path"))
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
