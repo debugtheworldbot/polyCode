@@ -6,47 +6,25 @@ import type { ChatMessage } from '../../types';
 
 function MessageBubble({ message, provider }: { message: ChatMessage; provider?: string }) {
   const roleClass = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
+  const isTool = message.message_type === 'tool';
+  
+  if (isTool) {
+    return (
+      <div className="message-bubble tool animate-fadeIn" style={{ animationDelay: '0.1s' }}>
+        <span style={{ opacity: 0.7 }}>{message.content}</span>
+      </div>
+    );
+  }
 
   return (
-    <div className={`message-bubble ${roleClass} animate-fadeIn`}>
-      {message.role !== 'user' && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          marginBottom: '6px',
-          fontSize: '11px',
-          fontWeight: 600,
-          opacity: 0.7,
-        }}>
-          {message.role === 'assistant' ? (
-            <>
-              <Bot size={13} />
-              <span>{provider === 'codex' ? 'Codex' : provider === 'claude' ? 'Claude' : 'AI'}</span>
-            </>
-          ) : (
-            <>
-              <AlertCircle size={13} />
-              <span>System</span>
-            </>
-          )}
-        </div>
-      )}
-      {message.role === 'user' && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          marginBottom: '6px',
-          fontSize: '11px',
-          fontWeight: 600,
-          opacity: 0.8,
-        }}>
-          <User size={13} />
-          <span>You</span>
-        </div>
-      )}
-      <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+    <div className={`message-bubble ${roleClass} animate-fadeIn`} style={{
+      animationDelay: '0.1s',
+    }}>
+      {/* Remove Headers for minimalist look */}
+      <div style={{ 
+        whiteSpace: 'pre-wrap', 
+        wordBreak: 'break-word',
+      }}>
         {formatContent(message.content)}
       </div>
     </div>
@@ -63,21 +41,36 @@ function formatContent(content: string) {
       const lang = firstNewline > 0 ? inner.slice(0, firstNewline).trim() : '';
       const code = firstNewline > 0 ? inner.slice(firstNewline + 1) : inner;
       return (
-        <pre key={i} style={{ position: 'relative' }}>
+        <div key={i} style={{ 
+          position: 'relative', 
+          margin: '12px 0',
+          borderRadius: '12px',
+          overflow: 'hidden',
+          border: '1px solid var(--color-border)',
+        }}>
           {lang && (
-            <span style={{
-              position: 'absolute',
-              top: '4px',
-              right: '8px',
-              fontSize: '10px',
-              opacity: 0.5,
+            <div style={{
+              background: 'var(--color-bg-secondary)',
+              padding: '4px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              color: 'var(--color-text-muted)',
+              borderBottom: '1px solid var(--color-border)',
               textTransform: 'uppercase',
             }}>
               {lang}
-            </span>
+            </div>
           )}
-          <code>{code}</code>
-        </pre>
+          <pre style={{ 
+            margin: 0, 
+            padding: '16px',
+            borderRadius: 0,
+            border: 'none',
+            background: 'var(--color-bg-tertiary)',
+          }}>
+            <code style={{ color: 'var(--color-text)' }}>{code}</code>
+          </pre>
+        </div>
       );
     }
     // Inline code
@@ -85,10 +78,13 @@ function formatContent(content: string) {
     return inlineParts.map((ip, j) => {
       if (ip.startsWith('`') && ip.endsWith('`')) {
         return <code key={`${i}-${j}`} style={{
-          background: 'var(--color-bg-tertiary)',
+          background: 'rgba(0, 0, 0, 0.06)', // Light gray background
+          color: 'var(--color-text)',
           padding: '2px 6px',
-          borderRadius: '4px',
+          borderRadius: '6px',
           fontSize: '13px',
+          fontWeight: 500,
+          fontFamily: "'JetBrains Mono', monospace"
         }}>{ip.slice(1, -1)}</code>;
       }
       return <span key={`${i}-${j}`}>{ip}</span>;

@@ -266,7 +266,7 @@ async fn send_codex_message_impl(
 
     if !active.contains_key(session_id) {
         // Spawn new codex app-server
-        let child = codex_adapter::spawn_codex_session(
+        let (child, codex_thread_id) = codex_adapter::spawn_codex_session(
             session_id.to_string(),
             project_path.to_string(),
             codex_bin.clone(),
@@ -279,6 +279,7 @@ async fn send_codex_message_impl(
             Arc::new(Mutex::new(ActiveSession {
                 child: Some(child),
                 session_id: session_id.to_string(),
+                codex_thread_id: Some(codex_thread_id),
             })),
         );
 
@@ -291,14 +292,24 @@ async fn send_codex_message_impl(
 
     if let Some(session_arc) = session_arc {
         let mut session = session_arc.lock().await;
+        let thread_id = session
+            .codex_thread_id
+            .clone()
+            .ok_or("Missing Codex thread id for active session")?;
+
         if let Some(ref mut child) = session.child {
             if let Some(ref mut stdin) = child.stdin {
-                // First start a thread, then send message
                 codex_adapter::send_codex_message(
                     stdin,
-                    "thread/send_user_message",
+                    "turn/start",
                     json!({
-                        "content": content,
+                        "threadId": thread_id,
+                        "input": [
+                            {
+                                "type": "text",
+                                "text": content,
+                            }
+                        ],
                     }),
                 )
                 .await?;
@@ -336,6 +347,7 @@ async fn send_claude_message_impl(
         Arc::new(Mutex::new(ActiveSession {
             child: Some(child),
             session_id: session_id.to_string(),
+            codex_thread_id: None,
         })),
     );
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::types::AppData;
+use crate::types::{AppData, ChatMessage, MessageRole, MessageType};
 
 fn data_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -74,4 +74,32 @@ pub async fn save_messages(
         .map_err(|e| format!("Failed to write messages: {}", e))?;
 
     Ok(())
+}
+
+/// Append a final assistant text message to a session's history.
+pub async fn append_assistant_text_message(session_id: &str, content: &str) -> Result<(), String> {
+    let text = content.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    let mut messages = load_messages(session_id).await;
+
+    // Avoid duplicating the same final assistant message on retries/reconnects.
+    if messages.last().is_some_and(|m| {
+        matches!(m.role, MessageRole::Assistant) && m.content == text
+    }) {
+        return Ok(());
+    }
+
+    messages.push(ChatMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        role: MessageRole::Assistant,
+        content: text.to_string(),
+        message_type: MessageType::Text,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    });
+
+    save_messages(session_id, &messages).await
 }

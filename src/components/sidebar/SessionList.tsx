@@ -69,71 +69,58 @@ export function SessionList() {
   const sortedSessions = [...sessions].sort((a, b) => b.updated_at - a.updated_at);
 
   return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px' }}>
-        <span className="sidebar-section-title" style={{ padding: 0 }}>
-          <MessageCircle size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-          {t('sidebar.sessions')}
-        </span>
-        <button
-          className="btn-icon"
-          onClick={() => setShowNewSessionDialog(true)}
-          title={t('sidebar.newSession')}
-          style={{ padding: '4px' }}
-        >
-          <Plus size={14} />
-        </button>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+      <button 
+        className="sidebar-item" 
+        onClick={() => setShowNewSessionDialog(true)}
+        style={{ color: 'var(--color-text-secondary)', marginBottom: '4px' }}
+      >
+        <Plus size={14} />
+        <span>New Thread</span>
+      </button>
 
-      {sortedSessions.length === 0 ? (
-        <div style={{ padding: '12px 8px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
-          {t('sidebar.noSessions')}
+      {sortedSessions.map((session) => (
+        <div
+          key={session.id}
+          className={`sidebar-item ${activeSessionId === session.id ? 'active' : ''}`}
+          onClick={() => setActiveSession(session.id)}
+          onContextMenu={(e) => handleContextMenu(e, session.id)}
+        >
+          <div style={{ 
+            width: '16px', 
+            height: '16px', 
+            borderRadius: '4px', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            fontSize: '11px',
+            fontWeight: 700,
+            background: session.provider === 'codex' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+            color: session.provider === 'codex' ? '#10b981' : '#f59e0b',
+            flexShrink: 0
+          }}>
+            {session.provider === 'codex' ? '⬡' : '◈'}
+          </div>
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {editingId === session.id ? (
+              <input
+                ref={editRef}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={() => handleRenameSubmit(session.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRenameSubmit(session.id);
+                  if (e.key === 'Escape') setEditingId(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: '100%', border: 'none', background: 'white', padding: '0 2px', borderRadius: '2px' }}
+              />
+            ) : (
+              session.name
+            )}
+          </div>
         </div>
-      ) : (
-        <div style={{ marginTop: '4px' }}>
-          {sortedSessions.map((session) => (
-            <div
-              key={session.id}
-              className={`session-item ${activeSessionId === session.id ? 'active' : ''}`}
-              onClick={() => setActiveSession(session.id)}
-              onContextMenu={(e) => handleContextMenu(e, session.id)}
-            >
-              <span className={`provider-badge ${session.provider}`}>
-                {session.provider === 'codex' ? '⬡' : '◈'}
-                {session.provider === 'codex' ? t('session.codex') : t('session.claude')}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {editingId === session.id ? (
-                  <input
-                    ref={editRef}
-                    className="form-input"
-                    style={{ padding: '2px 6px', fontSize: '13px' }}
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onBlur={() => handleRenameSubmit(session.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleRenameSubmit(session.id);
-                      if (e.key === 'Escape') setEditingId(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px' }}>
-                    {session.name}
-                  </div>
-                )}
-              </div>
-              <button
-                className="btn-icon"
-                onClick={(e) => { e.stopPropagation(); handleContextMenu(e, session.id); }}
-                style={{ padding: '2px', opacity: 0.5 }}
-              >
-                <MoreHorizontal size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      ))}
 
       {contextMenu && (
         <div
@@ -155,6 +142,6 @@ export function SessionList() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

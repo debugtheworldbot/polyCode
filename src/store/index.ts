@@ -3,6 +3,216 @@ import type { Project, Session, ChatMessage, AppSettings, SessionEvent, AIProvid
 import * as api from '../services/tauri';
 import { setLanguage } from '../i18n';
 
+type JsonRecord = Record<string, unknown>;
+type InsertMode = 'append' | 'replace_or_create' | 'new';
+
+interface ParsedEventMessage {
+  role: ChatMessage['role'];
+  messageType: ChatMessage['message_type'];
+  content: string;
+  mode: InsertMode;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function createMessage(sessionId: string, parsed: ParsedEventMessage): ChatMessage {
+  return {
+    id: crypto.randomUUID(),
+    session_id: sessionId,
+    role: parsed.role,
+    content: parsed.content,
+    message_type: parsed.messageType,
+    created_at: Date.now(),
+  };
+}
+
+function mergeMessage(
+  existing: ChatMessage[],
+  sessionId: string,
+  parsed: ParsedEventMessage
+): ChatMessage[] {
+  if (!parsed.content) return existing;
+
+  const last = existing[existing.length - 1];
+  const isSameKind =
+    last &&
+    last.role === parsed.role &&
+    last.message_type === parsed.messageType;
+
+  if (parsed.mode === 'append') {
+    if (isSameKind) {
+      const updated = [...existing];
+      updated[updated.length - 1] = {
+        ...last,
+        content: `${last.content}${parsed.content}`,
+      };
+      return updated;
+    }
+    return [...existing, createMessage(sessionId, parsed)];
+  }
+
+  if (parsed.mode === 'replace_or_create') {
+    if (isSameKind) {
+      if (last.content === parsed.content) return existing;
+      if (parsed.content.includes(last.content)) {
+        const updated = [...existing];
+        updated[updated.length - 1] = { ...last, content: parsed.content };
+        return updated;
+      }
+      if (last.content.includes(parsed.content)) return existing;
+      return [...existing, createMessage(sessionId, parsed)];
+    }
+    return [...existing, createMessage(sessionId, parsed)];
+  }
+
+  return [...existing, createMessage(sessionId, parsed)];
+}
+
+function parseClaudeDelta(data: JsonRecord): string | null {
+  const evt = isRecord(data.event) ? data.event : null;
+  if (!evt) return null;
+
+  const delta = isRecord(evt.delta) ? evt.delta : null;
+  if (!delta) return null;
+
+  if (delta.type === 'text_delta') {
+    return asString(delta.text);
+  }
+  return null;
+}
+
+function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
+  const rpcError = isRecord(data.error) ? data.error : null;
+  if (rpcError) {
+    return {
+      role: 'system',
+      messageType: 'error',
+      content: asString(rpcError.message) || JSON.stringify(rpcError),
+      mode: 'new',
+    };
+  }
+
+  const method = asString(data.method);
+  if (!method) return null;
+
+  const params = isRecord(data.params) ? data.params : null;
+  if (!params) return null;
+
+  if (method === 'item/agentMessage/delta') {
+    const delta = asString(params.delta);
+    if (!delta) return null;
+    return {
+      role: 'assistant',
+      messageType: 'text',
+      content: delta,
+      mode: 'append',
+    };
+  }
+
+  if (method === 'item/completed') {
+    const item = isRecord(params.item) ? params.item : null;
+    if (!item) return null;
+
+    const itemType = asString(item.type);
+    if (!itemType) return null;
+
+    if (itemType === 'agentMessage') {
+      const text = asString(item.text);
+      if (!text) return null;
+      return {
+        role: 'assistant',
+        messageType: 'text',
+        content: text,
+        mode: 'replace_or_create',
+      };
+    }
+
+    if (itemType === 'commandExecution') {
+      const command = asString(item.command) || 'command';
+      const exitCode = asNumber(item.exitCode);
+      const durationMs = asNumber(item.durationMs);
+      const status = asString(item.status);
+      const details: string[] = [];
+      if (exitCode !== null) details.push(`exit ${exitCode}`);
+      else if (status) details.push(status);
+      if (durationMs !== null) details.push(`${Math.round(durationMs)}ms`);
+
+      return {
+        role: 'assistant',
+        messageType: 'tool',
+        content: details.length > 0
+          ? `[Command] ${command} (${details.join(', ')})`
+          : `[Command] ${command}`,
+        mode: 'new',
+      };
+    }
+
+    if (itemType === 'fileChange') {
+      const changes = Array.isArray(item.changes) ? item.changes.length : 0;
+      const status = asString(item.status);
+      return {
+        role: 'assistant',
+        messageType: 'diff',
+        content: status
+          ? `[Files] ${changes} change${changes === 1 ? '' : 's'} (${status})`
+          : `[Files] ${changes} change${changes === 1 ? '' : 's'}`,
+        mode: 'new',
+      };
+    }
+
+    if (itemType === 'mcpToolCall') {
+      const server = asString(item.server) || 'mcp';
+      const tool = asString(item.tool) || 'tool';
+      const status = asString(item.status) || 'completed';
+      return {
+        role: 'assistant',
+        messageType: 'tool',
+        content: `[MCP] ${server}/${tool} (${status})`,
+        mode: 'new',
+      };
+    }
+
+    return null;
+  }
+
+  if (method === 'error') {
+    const err = isRecord(params.error) ? params.error : null;
+    return {
+      role: 'system',
+      messageType: 'error',
+      content: err ? asString(err.message) || JSON.stringify(err) : 'Codex error',
+      mode: 'new',
+    };
+  }
+
+  if (method === 'turn/completed') {
+    const turn = isRecord(params.turn) ? params.turn : null;
+    if (!turn) return null;
+
+    if (asString(turn.status) === 'failed') {
+      const err = isRecord(turn.error) ? turn.error : null;
+      return {
+        role: 'system',
+        messageType: 'error',
+        content: err ? asString(err.message) || JSON.stringify(err) : 'Codex turn failed',
+        mode: 'new',
+      };
+    }
+  }
+
+  return null;
+}
+
 interface AppStore {
   // ─── State ───
   projects: Project[];
@@ -234,95 +444,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    // Handle streaming text from both Codex and Claude
-    if (
-      event_type === 'codex_message' ||
-      event_type === 'claude_stream' ||
-      event_type === 'claude_message'
-    ) {
-      // Extract text content
-      let text = '';
-      if (event_type === 'codex_message') {
-        // Codex app-server messages
-        const method = data.method as string | undefined;
-        if (method === 'thread/message') {
-          const params = data.params as Record<string, unknown> | undefined;
-          if (params) {
-            text = (params.text as string) || (params.content as string) || JSON.stringify(params);
-          }
-        } else if (data.result !== undefined) {
-          // Response to a request
-          return;
-        } else {
-          text = JSON.stringify(data);
-        }
-      } else if (event_type === 'claude_stream') {
-        // Claude stream events
-        const evt = data.event as Record<string, unknown> | undefined;
-        if (evt) {
-          const delta = evt.delta as Record<string, unknown> | undefined;
-          if (delta && delta.type === 'text_delta') {
-            text = (delta.text as string) || '';
-          }
-        }
-        if (!text) return;
-      } else {
-        text = JSON.stringify(data);
-      }
+    if (event_type === 'session_renamed') {
+      const newName = asString(data.name);
+      if (!newName) return;
 
-      if (!text) return;
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === session_id ? { ...s, name: newName } : s
+        ),
+      }));
+      return;
+    }
+
+    if (event_type === 'codex_message') {
+      const parsed = parseCodexEvent(data);
+      if (!parsed) return;
 
       set((state) => {
         const existing = state.messages[session_id] || [];
-        // Check if we should append to the last assistant message or create new
-        const lastMsg = existing[existing.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.message_type === 'text') {
-          // Append to existing message (streaming)
-          const updated = [...existing];
-          updated[updated.length - 1] = {
-            ...lastMsg,
-            content: lastMsg.content + text,
-          };
-          return { messages: { ...state.messages, [session_id]: updated } };
-        } else {
-          // Create new assistant message
-          const newMsg: ChatMessage = {
-            id: crypto.randomUUID(),
-            session_id,
-            role: 'assistant',
-            content: text,
-            message_type: 'text',
-            created_at: Date.now(),
-          };
-          return {
-            messages: { ...state.messages, [session_id]: [...existing, newMsg] },
-          };
-        }
+        const updated = mergeMessage(existing, session_id, parsed);
+        if (updated === existing) return state;
+        return { messages: { ...state.messages, [session_id]: updated } };
+      });
+      return;
+    }
+
+    if (event_type === 'claude_stream') {
+      const delta = parseClaudeDelta(data);
+      if (!delta) return;
+
+      set((state) => {
+        const existing = state.messages[session_id] || [];
+        const updated = mergeMessage(existing, session_id, {
+          role: 'assistant',
+          messageType: 'text',
+          content: delta,
+          mode: 'append',
+        });
+        if (updated === existing) return state;
+        return { messages: { ...state.messages, [session_id]: updated } };
       });
       return;
     }
 
     // Handle Claude result (final message)
     if (event_type === 'claude_result') {
-      const result = (data.result as string) || '';
+      const result = asString(data.result) || '';
       if (result) {
         set((state) => {
           const existing = state.messages[session_id] || [];
-          const lastMsg = existing[existing.length - 1];
-          if (lastMsg && lastMsg.role === 'assistant') {
-            // The streaming already built the message, just finalize
-            return state;
-          }
-          const newMsg: ChatMessage = {
-            id: crypto.randomUUID(),
-            session_id,
+          const updated = mergeMessage(existing, session_id, {
             role: 'assistant',
+            messageType: 'text',
             content: result,
-            message_type: 'text',
-            created_at: Date.now(),
-          };
+            mode: 'replace_or_create',
+          });
+          if (updated === existing) return state;
           return {
-            messages: { ...state.messages, [session_id]: [...existing, newMsg] },
+            messages: { ...state.messages, [session_id]: updated },
           };
         });
       }
@@ -331,19 +510,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle errors
     if (event_type === 'codex_error' || event_type === 'claude_error') {
-      const errorMsg = (data.message as string) || 'Unknown error';
+      const errorMsg = asString(data.message) || 'Unknown error';
       set((state) => {
         const existing = state.messages[session_id] || [];
-        const newMsg: ChatMessage = {
-          id: crypto.randomUUID(),
-          session_id,
+        const updated = mergeMessage(existing, session_id, {
           role: 'system',
+          messageType: 'error',
           content: errorMsg,
-          message_type: 'error',
-          created_at: Date.now(),
-        };
+          mode: 'new',
+        });
         return {
-          messages: { ...state.messages, [session_id]: [...existing, newMsg] },
+          messages: { ...state.messages, [session_id]: updated },
         };
       });
       return;

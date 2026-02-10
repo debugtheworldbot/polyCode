@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square } from 'lucide-react';
+import { Send, Square, Plus, Mic, ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
@@ -44,48 +44,61 @@ export function Composer() {
   if (!activeSessionId) return null;
 
   return (
-    <div className="composer">
-      <div className="composer-inner">
+    <div className="composer-container">
+      <div className="composer-box">
         <textarea
           ref={textareaRef}
+          className="composer-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={t('composer.placeholder')}
+          placeholder="Ask for follow-up changes"
           rows={1}
           disabled={isSending}
         />
-        {isSending ? (
-          <button
-            className="btn-icon"
-            onClick={handleStop}
-            title={t('session.stop')}
-            style={{ color: 'var(--color-error)', padding: '6px' }}
-          >
-            <Square size={18} fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            className="btn-icon"
-            onClick={handleSend}
-            disabled={!input.trim()}
-            title={t('composer.send')}
-            style={{
-              color: input.trim() ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              padding: '6px',
-            }}
-          >
-            <Send size={18} />
-          </button>
-        )}
-      </div>
-      <div style={{
-        fontSize: '11px',
-        color: 'var(--color-text-muted)',
-        textAlign: 'center',
-        marginTop: '6px',
-      }}>
-        Press Enter to send, Shift+Enter for new line
+        
+        <div className="composer-footer">
+          <div className="composer-actions-left">
+            <button className="icon-btn" title="Add Attachment">
+              <Plus size={18} />
+            </button>
+            <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
+              <span>GPT-5.3-Codex</span>
+              <ChevronDown size={12} />
+            </button>
+            <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
+               <span>High</span>
+               <ChevronDown size={12} />
+            </button>
+          </div>
+          
+          <div className="composer-actions-right">
+             <button className="icon-btn">
+               <Mic size={18} />
+             </button>
+            {isSending ? (
+              <button
+                className="send-btn"
+                onClick={handleStop}
+                title={t('session.stop')}
+              >
+                <Square size={10} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                className="send-btn"
+                onClick={handleSend}
+                disabled={!input.trim()}
+                title={t('composer.send')}
+              >
+                <div style={{ transform: 'rotate(-90deg) translateX(1px)' }}>
+                   <div style={{ borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '8px solid currentColor', width: 0, height: 0, margin: '0 auto' }}></div>
+                   <div style={{ width: '2px', height: '8px', background: 'currentColor', margin: '-1px auto 0' }}></div>
+                </div>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

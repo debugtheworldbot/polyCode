@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Folder, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Folder, Pencil, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 
@@ -25,7 +25,7 @@ export function ProjectList() {
 
   if (projects.length === 0) {
     return (
-      <div style={{ padding: '12px 8px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+      <div style={{ padding: '20px 12px', fontSize: '12px', color: 'var(--color-text-muted)', textAlign: 'center', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', border: '1px dashed var(--color-border)' }}>
         {t('sidebar.noProjects')}
       </div>
     );
@@ -61,51 +61,36 @@ export function ProjectList() {
   };
 
   return (
-    <>
-      <div style={{ marginTop: '4px' }}>
-        {projects.map((project) => (
-          <div
-            key={project.id}
-            className={`project-item ${activeProjectId === project.id ? 'active' : ''}`}
-            onClick={() => setActiveProject(project.id)}
-            onContextMenu={(e) => handleContextMenu(e, project.id)}
-          >
-            <Folder size={15} style={{ flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {editingId === project.id ? (
-                <input
-                  ref={editRef}
-                  className="form-input"
-                  style={{ padding: '2px 6px', fontSize: '13px' }}
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onBlur={() => handleRenameSubmit(project.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRenameSubmit(project.id);
-                    if (e.key === 'Escape') setEditingId(null);
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {project.name}
-                  </div>
-                  <div className="project-path">{project.path.split('/').pop()}</div>
-                </>
-              )}
-            </div>
-            <button
-              className="btn-icon"
-              onClick={(e) => { e.stopPropagation(); handleContextMenu(e, project.id); }}
-              style={{ padding: '2px', opacity: 0.5 }}
-            >
-              <MoreHorizontal size={14} />
-            </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+      {projects.map((project) => (
+        <div
+          key={project.id}
+          className={`sidebar-item ${activeProjectId === project.id ? 'active' : ''}`}
+          onClick={() => setActiveProject(project.id)}
+          onContextMenu={(e) => handleContextMenu(e, project.id)}
+        >
+          <Folder size={15} style={{ color: activeProjectId === project.id ? 'var(--color-text)' : 'var(--color-text-secondary)' }} />
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {editingId === project.id ? (
+              <input
+                ref={editRef}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={() => handleRenameSubmit(project.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRenameSubmit(project.id);
+                  if (e.key === 'Escape') setEditingId(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: '100%', border: 'none', background: 'white', padding: '0 2px', borderRadius: '2px', color: '#000' }}
+              />
+            ) : (
+              project.name
+            )}
           </div>
-        ))}
-      </div>
-
+        </div>
+      ))}
+      
       {contextMenu && (
         <div
           className="context-menu"
@@ -122,6 +107,6 @@ export function ProjectList() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

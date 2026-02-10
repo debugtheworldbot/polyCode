@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::storage;
 use crate::types::SessionEvent;
 
 /// Resolve the claude binary path
@@ -90,10 +91,23 @@ pub async fn spawn_claude_session(
             let event = SessionEvent {
                 session_id: sid.clone(),
                 event_type,
-                data,
+                data: data.clone(),
             };
 
             let _ = handle.emit("session-event", &event);
+
+            if let Some(text) = extract_claude_final_text(&data) {
+                if let Err(e) = storage::append_assistant_text_message(&sid, &text).await {
+                    let _ = handle.emit(
+                        "session-event",
+                        &SessionEvent {
+                            session_id: sid.clone(),
+                            event_type: "claude_error".to_string(),
+                            data: json!({ "message": format!("Failed to persist Claude message: {}", e) }),
+                        },
+                    );
+                }
+            }
         }
 
         // Signal that the process has ended
@@ -149,4 +163,14 @@ pub fn extract_text_from_stream(data: &Value) -> Option<String> {
         return data.get("result").and_then(|r| r.as_str()).map(|s| s.to_string());
     }
     None
+}
+
+fn extract_claude_final_text(data: &Value) -> Option<String> {
+    if data.get("type").and_then(|t| t.as_str()) != Some("result") {
+        return None;
+    }
+
+    data.get("result")
+        .and_then(|r| r.as_str())
+        .map(|s| s.to_string())
 }

@@ -15,8 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let rt = tokio::runtime::Handle::current();
-            let data = rt.block_on(storage::load_data());
+            let data = tauri::async_runtime::block_on(storage::load_data());
             app.manage(AppState::new(data));
             Ok(())
         })
