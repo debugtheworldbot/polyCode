@@ -496,6 +496,15 @@ pub async fn read_codex_thread_messages(
     Ok(messages)
 }
 
+pub async fn run_codex_method(
+    project_path: String,
+    codex_bin: Option<String>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    run_codex_request(project_path, codex_bin, method, params).await
+}
+
 async fn run_codex_request(
     project_path: String,
     codex_bin: Option<String>,
@@ -539,6 +548,9 @@ async fn run_codex_request(
                 "name": "polycode",
                 "title": "polyCode",
                 "version": "0.1.0"
+            },
+            "capabilities": {
+                "experimentalApi": true
             }
         }),
     )

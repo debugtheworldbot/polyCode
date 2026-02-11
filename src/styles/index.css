@@ -1228,6 +1228,89 @@ body {
   flex-shrink: 0;
 }
 
+.context-meter {
+  --context-progress: 0%;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.context-ring {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  position: relative;
+  background:
+    radial-gradient(circle at center, var(--color-bg-solid) 57%, transparent 58%),
+    conic-gradient(#0a84ff var(--context-progress), color-mix(in srgb, var(--color-border) 80%, transparent) 0);
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.context-ring-text {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-text-secondary);
+}
+
+.context-meter:hover .context-ring-text {
+  color: var(--color-text);
+}
+
+.context-tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 232px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-solid) 95%, transparent);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+  display: none;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.context-meter:hover .context-tooltip {
+  display: block;
+}
+
+.context-tooltip-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.context-tooltip-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+}
+
+.context-tooltip-line + .context-tooltip-line {
+  margin-top: 3px;
+}
+
+.context-tooltip-line strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.context-tooltip-empty {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
 .icon-btn {
   color: var(--color-text-secondary);
   padding: 4px;

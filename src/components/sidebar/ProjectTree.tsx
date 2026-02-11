@@ -26,6 +26,7 @@ export function ProjectTree() {
   } = useAppStore();
 
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
+  const prevVisibleCounts = useRef<Record<string, number>>({});
   const PAGE_SIZE = 10;
 
   const [contextMenu, setContextMenu] = useState<{
@@ -58,17 +59,20 @@ export function ProjectTree() {
   }, [editingId]);
 
   useEffect(() => {
+    prevVisibleCounts.current = { ...visibleCounts };
+  }, [visibleCounts]);
+
+  useEffect(() => {
     const handleClick = () => setContextMenu(null);
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
   const handleProjectClick = (projectId: string) => {
-    if (activeProjectId === projectId) {
-      toggleProjectExpanded(projectId);
-    } else {
+    if (activeProjectId !== projectId) {
       void setActiveProject(projectId);
     }
+    toggleProjectExpanded(projectId);
   };
 
   const handleProjectContext = (e: React.MouseEvent, projectId: string) => {
@@ -132,6 +136,7 @@ export function ProjectTree() {
           .slice()
           .sort((a, b) => b.updated_at - a.updated_at);
         const visibleCount = visibleCounts[project.id] || PAGE_SIZE;
+        const prevCount = prevVisibleCounts.current[project.id] || PAGE_SIZE;
         const sessions = allSessions.slice(0, visibleCount);
         const hasMore = allSessions.length > visibleCount;
         const remaining = allSessions.length - visibleCount;
@@ -181,12 +186,13 @@ export function ProjectTree() {
             </div>
 
             {/* Sessions under project */}
-            {isExpanded && (
+            <div className={`project-children ${isExpanded ? 'expanded' : ''}`}>
               <div style={{ paddingLeft: '20px' }}>
-                {sessions.map((session) => (
+                {sessions.map((session, index) => (
                   <div
                     key={session.id}
-                    className={`sidebar-item ${activeSessionId === session.id ? 'active' : ''}`}
+                    className={`sidebar-item ${activeSessionId === session.id ? 'active' : ''}${index >= prevCount && visibleCount > prevCount ? ' session-enter' : ''}`}
+                    style={index >= prevCount && visibleCount > prevCount ? { animationDelay: `${(index - prevCount) * 0.03}s` } as React.CSSProperties : undefined}
                     onClick={() => {
                       if (activeProjectId !== project.id) void setActiveProject(project.id);
                       void setActiveSession(session.id);
@@ -259,7 +265,7 @@ export function ProjectTree() {
                   </button>
                 )}
               </div>
-            )}
+            </div>
           </div>
         );
       })}

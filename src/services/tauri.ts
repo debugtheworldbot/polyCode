@@ -8,6 +8,7 @@ import type {
   AppSettings,
   SessionEvent,
   CLIStatus,
+  SlashCommand,
   GitStatusResponse,
   GitFileDiffResponse,
 } from '../types';
@@ -101,6 +102,10 @@ export async function saveProviderSessionId(
 
 export async function checkCliAvailable(cliName: string): Promise<CLIStatus> {
   return invoke<CLIStatus>('check_cli_available', { cliName });
+}
+
+export async function listCodexSlashCommands(): Promise<SlashCommand[]> {
+  return invoke<SlashCommand[]>('list_codex_slash_commands');
 }
 
 export async function getGitStatus(projectId: string): Promise<GitStatusResponse> {

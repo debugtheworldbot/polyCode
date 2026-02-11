@@ -71,6 +71,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::check_cli_available,
+            commands::list_codex_slash_commands,
             commands::get_git_status,
             commands::get_git_file_diff,
             commands::git_stage_file,

@@ -1,6 +1,6 @@
 # polyCode
 
-A Tauri desktop client for orchestrating **OpenAI Codex** and **Anthropic Claude Code** agents across local workspaces. Manage all your AI coding sessions in one place, organized by project.
+A Tauri v2 desktop app for orchestrating **OpenAI Codex**, **Anthropic Claude Code**, and **Google Gemini CLI** agents across local workspaces. Manage all your AI coding sessions in one place, organized by project.
 
 ![Tauri](https://img.shields.io/badge/Tauri-v2-blue)
 ![React](https://img.shields.io/badge/React-v19-61dafb)
@@ -9,10 +9,11 @@ A Tauri desktop client for orchestrating **OpenAI Codex** and **Anthropic Claude
 
 ## Features
 
-### Dual AI Provider Support
-- **OpenAI Codex** integration via `codex app-server` JSON-RPC protocol over stdio
-- **Anthropic Claude Code** integration via `claude` CLI with streaming JSON output
-- Clear visual distinction between Codex and Claude sessions with color-coded badges
+### Multi-Provider AI Support
+- **OpenAI Codex** — `codex app-server` JSON-RPC over stdio
+- **Anthropic Claude Code** — `claude` CLI with streaming JSON output
+- **Google Gemini CLI** — session sync and import from local Gemini files
+- Color-coded badges for each provider
 
 ### Project-Based Organization
 - Add local code repositories as projects
@@ -26,9 +27,9 @@ A Tauri desktop client for orchestrating **OpenAI Codex** and **Anthropic Claude
 - Stop/interrupt running sessions
 
 ### Modern UI
-- Clean, responsive interface built with React and Tailwind CSS
-- Light and dark theme support (with system preference detection)
-- Multi-language support (English and Chinese)
+- macOS liquid glass vibrancy effect
+- Light / Dark / System theme
+- Multi-language (English & Chinese)
 - Collapsible sidebar with context menus
 - Keyboard shortcuts (Enter to send, Shift+Enter for new line)
 
@@ -54,6 +55,7 @@ polycode/
 │       ├── commands.rs     # Tauri command handlers
 │       ├── codex_adapter.rs    # Codex app-server adapter
 │       ├── claude_adapter.rs   # Claude Code CLI adapter
+│       ├── gemini_adapter.rs   # Gemini CLI adapter
 │       ├── state.rs        # Application state
 │       ├── storage.rs      # Data persistence
 │       └── types.rs        # Rust type definitions
@@ -67,12 +69,16 @@ The app spawns a `codex app-server` child process per workspace and communicates
 **Claude Code Integration:**
 For each message, the app spawns a `claude -p "<prompt>" --output-format stream-json` process. Session continuity is maintained using `--resume <session_id>`. Streaming JSON events are parsed and displayed in real-time.
 
+**Gemini CLI Integration:**
+Syncs and imports sessions from Gemini CLI's local session files.
+
 ## Requirements
 
 - [Node.js](https://nodejs.org/) (v18+)
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
-- [Codex CLI](https://github.com/openai/codex) installed and available as `codex` in PATH
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and available as `claude` in PATH
+- [Codex CLI](https://github.com/openai/codex) — `codex` in PATH
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) — `claude` in PATH
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `gemini` in PATH (optional)
 
 ### Linux Additional Dependencies
 
@@ -112,6 +118,7 @@ Settings are accessible from the sidebar gear icon:
 | **Language** | English, Chinese, or System |
 | **Codex Binary Path** | Custom path to `codex` binary (leave empty for default) |
 | **Claude Binary Path** | Custom path to `claude` binary (leave empty for default) |
+| **Gemini Binary Path** | Custom path to `gemini` binary (leave empty for default) |
 
 Data is persisted to the OS-specific app data directory:
 - **Linux:** `~/.local/share/polycode/`

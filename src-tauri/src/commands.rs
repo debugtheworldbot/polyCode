@@ -449,17 +449,50 @@ async fn send_codex_message_impl(
     state: &State<'_, AppState>,
     app: &AppHandle,
 ) -> Result<(), String> {
-    if local_image_paths.is_empty() && is_codex_status_command(text_content) {
-        return handle_codex_status_command(
+    let slash_invocation = if local_image_paths.is_empty() {
+        parse_codex_slash_invocation(text_content)
+    } else {
+        None
+    };
+
+    if let Some(invocation) = slash_invocation.as_ref() {
+        if invocation.command == CODEX_STATUS_COMMAND {
+            return handle_codex_status_command(
+                session_id,
+                project_path,
+                codex_bin,
+                model,
+                provider_session_id,
+                state,
+                app,
+            )
+            .await;
+        }
+
+        if invocation.command == CODEX_USAGE_COMMAND {
+            return handle_codex_status_command(
+                session_id,
+                project_path,
+                codex_bin,
+                model,
+                provider_session_id,
+                state,
+                app,
+            )
+            .await;
+        }
+
+        if handle_codex_readonly_slash_command(
+            invocation,
             session_id,
             project_path,
             codex_bin,
-            model,
-            provider_session_id,
-            state,
             app,
         )
-        .await;
+        .await?
+        {
+            return Ok(());
+        }
     }
 
     let mut active = state.active_sessions.lock().await;
@@ -514,6 +547,34 @@ async fn send_codex_message_impl(
 
         if let Some(ref mut child) = session.child {
             if let Some(ref mut stdin) = child.stdin {
+                if let Some(invocation) = slash_invocation.as_ref() {
+                    if handle_codex_thread_slash_command(
+                        invocation,
+                        session_id,
+                        &thread_id,
+                        model,
+                        state,
+                        app,
+                        stdin,
+                    )
+                    .await?
+                    {
+                        return Ok(());
+                    }
+
+                    append_and_emit_assistant_message(
+                        session_id,
+                        format!(
+                            "Slash command {} is not supported in this app yet.",
+                            invocation.command
+                        ),
+                        app,
+                    )
+                    .await?;
+                    emit_codex_turn_completed(session_id, app).await;
+                    return Ok(());
+                }
+
                 let mut input_items: Vec<Value> = Vec::new();
                 if !text_content.trim().is_empty() {
                     input_items.push(json!({
@@ -567,9 +628,53 @@ async fn send_codex_message_impl(
 }
 
 const CODEX_STATUS_COMMAND: &str = "/status";
+const CODEX_USAGE_COMMAND: &str = "/usage";
+const CODEX_COMPACT_COMMAND: &str = "/compact";
+const CODEX_REVIEW_COMMAND: &str = "/review";
+const CODEX_INIT_COMMAND: &str = "/init";
+const CODEX_RENAME_COMMAND: &str = "/rename";
+const CODEX_MODEL_COMMAND: &str = "/model";
+const CODEX_MCP_COMMAND: &str = "/mcp";
+const CODEX_SKILLS_COMMAND: &str = "/skills";
+const CODEX_APPS_COMMAND: &str = "/apps";
 
-fn is_codex_status_command(input: &str) -> bool {
-    input.trim().eq_ignore_ascii_case(CODEX_STATUS_COMMAND)
+const CODEX_INIT_PROMPT: &str = "Generate or update AGENTS.md for this repository. Keep it concise and practical. Include: project structure, build/test/dev commands, coding style, testing guidance, and commit/PR guidelines.";
+
+#[derive(Debug, Clone)]
+struct CodexSlashInvocation {
+    command: String,
+    args: String,
+}
+
+fn parse_codex_slash_invocation(input: &str) -> Option<CodexSlashInvocation> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+
+    let mut split_at = trimmed.len();
+    for (idx, ch) in trimmed.char_indices() {
+        if idx == 0 {
+            continue;
+        }
+        if ch.is_whitespace() {
+            split_at = idx;
+            break;
+        }
+    }
+
+    let command = trimmed[..split_at].to_ascii_lowercase();
+    if command.len() <= 1 || !command[1..].chars().all(is_slash_command_char) {
+        return None;
+    }
+
+    let args = if split_at < trimmed.len() {
+        trimmed[split_at..].trim().to_string()
+    } else {
+        String::new()
+    };
+
+    Some(CodexSlashInvocation { command, args })
 }
 
 fn trim_to_option(value: Option<&str>) -> Option<String> {
@@ -655,6 +760,361 @@ async fn append_and_emit_assistant_message(
     );
 
     Ok(())
+}
+
+async fn handle_codex_readonly_slash_command(
+    invocation: &CodexSlashInvocation,
+    session_id: &str,
+    project_path: &str,
+    codex_bin: &Option<String>,
+    app: &AppHandle,
+) -> Result<bool, String> {
+    match invocation.command.as_str() {
+        CODEX_MCP_COMMAND => {
+            let result = codex_adapter::run_codex_method(
+                project_path.to_string(),
+                codex_bin.clone(),
+                "mcpServerStatus/list",
+                json!({}),
+            )
+            .await?;
+
+            let servers = result
+                .get("data")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut lines = Vec::new();
+            lines.push(format!("MCP servers: {}", servers.len()));
+            for server in servers.iter().take(20) {
+                let name = first_non_empty_string(server, &["name"])
+                    .unwrap_or_else(|| "unknown".to_string());
+                let auth = first_non_empty_string(server, &["authStatus", "auth_status"])
+                    .unwrap_or_else(|| "unknown".to_string());
+                lines.push(format!("- {} ({})", name, auth));
+            }
+            if servers.len() > 20 {
+                lines.push(format!("...and {} more", servers.len() - 20));
+            }
+
+            append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        CODEX_SKILLS_COMMAND => {
+            let result = codex_adapter::run_codex_method(
+                project_path.to_string(),
+                codex_bin.clone(),
+                "skills/list",
+                json!({}),
+            )
+            .await?;
+
+            let entries = result
+                .get("data")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut names: Vec<String> = Vec::new();
+            for entry in entries {
+                let skills = entry
+                    .get("skills")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                for skill in skills {
+                    if let Some(name) = first_non_empty_string(&skill, &["name"]) {
+                        names.push(name);
+                    }
+                }
+            }
+            names.sort();
+            names.dedup();
+
+            let mut lines = Vec::new();
+            lines.push(format!("Skills: {}", names.len()));
+            for name in names.iter().take(30) {
+                lines.push(format!("- {}", name));
+            }
+            if names.len() > 30 {
+                lines.push(format!("...and {} more", names.len() - 30));
+            }
+
+            append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        CODEX_APPS_COMMAND => {
+            let result = codex_adapter::run_codex_method(
+                project_path.to_string(),
+                codex_bin.clone(),
+                "app/list",
+                json!({}),
+            )
+            .await?;
+
+            let apps = result
+                .get("data")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut lines = Vec::new();
+            lines.push(format!("Connected apps: {}", apps.len()));
+            for app_entry in apps.iter().take(20) {
+                let name = first_non_empty_string(app_entry, &["name", "id"])
+                    .unwrap_or_else(|| "unknown".to_string());
+                lines.push(format!("- {}", name));
+            }
+            if apps.len() > 20 {
+                lines.push(format!("...and {} more", apps.len() - 20));
+            }
+
+            append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn review_target_from_args(args: &str) -> (Value, String) {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return (
+            json!({ "type": "uncommittedChanges" }),
+            "uncommitted changes".to_string(),
+        );
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(branch) = lower
+        .strip_prefix("base ")
+        .and_then(|_| trim_to_option(Some(trimmed[5..].trim())))
+    {
+        return (
+            json!({
+                "type": "baseBranch",
+                "branch": branch,
+            }),
+            format!("base branch {}", branch),
+        );
+    }
+
+    if let Some(sha) = lower
+        .strip_prefix("commit ")
+        .and_then(|_| trim_to_option(Some(trimmed[7..].trim())))
+    {
+        return (
+            json!({
+                "type": "commit",
+                "sha": sha,
+            }),
+            format!("commit {}", sha),
+        );
+    }
+
+    (
+        json!({
+            "type": "custom",
+            "instructions": trimmed,
+        }),
+        "custom review target".to_string(),
+    )
+}
+
+async fn emit_codex_turn_completed(session_id: &str, app: &AppHandle) {
+    let _ = app.emit(
+        "session-event",
+        SessionEvent {
+            session_id: session_id.to_string(),
+            event_type: "codex_message".to_string(),
+            data: json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed",
+                    }
+                }
+            }),
+        },
+    );
+}
+
+async fn handle_codex_model_slash_command(
+    session_id: &str,
+    args: &str,
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let requested = args.trim();
+    if requested.is_empty() {
+        let current_model = {
+            let data = state.data.lock().await;
+            data.sessions
+                .iter()
+                .find(|s| s.id == session_id)
+                .and_then(|s| trim_to_option(s.model.as_deref()))
+        };
+
+        let content = match current_model {
+            Some(model) => format!("Current model: {}", model),
+            None => "Current model: default".to_string(),
+        };
+        append_and_emit_assistant_message(session_id, content, app).await?;
+        emit_codex_turn_completed(session_id, app).await;
+        return Ok(());
+    }
+
+    let normalized = if requested.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(requested.to_string())
+    };
+
+    let mut data = state.data.lock().await;
+    let session = data
+        .sessions
+        .iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or("Session not found")?;
+    session.model = normalized.clone();
+    session.updated_at = chrono::Utc::now().timestamp_millis();
+    storage::save_data(&data).await?;
+    drop(data);
+
+    let content = match normalized {
+        Some(model) => format!("Model set to {}", model),
+        None => "Model reset to default".to_string(),
+    };
+    append_and_emit_assistant_message(session_id, content, app).await?;
+    emit_codex_turn_completed(session_id, app).await;
+    Ok(())
+}
+
+async fn handle_codex_thread_slash_command(
+    invocation: &CodexSlashInvocation,
+    session_id: &str,
+    thread_id: &str,
+    model: Option<&str>,
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+    stdin: &mut tokio::process::ChildStdin,
+) -> Result<bool, String> {
+    match invocation.command.as_str() {
+        CODEX_COMPACT_COMMAND => {
+            codex_adapter::send_codex_message(
+                stdin,
+                "thread/compact/start",
+                json!({ "threadId": thread_id }),
+            )
+            .await?;
+            append_and_emit_assistant_message(
+                session_id,
+                "Started compacting the current thread.".to_string(),
+                app,
+            )
+            .await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        CODEX_REVIEW_COMMAND => {
+            let (target, target_label) = review_target_from_args(&invocation.args);
+            codex_adapter::send_codex_message(
+                stdin,
+                "review/start",
+                json!({
+                    "threadId": thread_id,
+                    "target": target,
+                }),
+            )
+            .await?;
+            append_and_emit_assistant_message(
+                session_id,
+                format!("Started review for {}.", target_label),
+                app,
+            )
+            .await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        CODEX_INIT_COMMAND => {
+            let mut turn_params = json!({
+                "threadId": thread_id,
+                "input": [{
+                    "type": "text",
+                    "text": CODEX_INIT_PROMPT,
+                }],
+            });
+
+            if let Some(model_name) = trim_to_option(model) {
+                if let Some(obj) = turn_params.as_object_mut() {
+                    obj.insert("model".to_string(), Value::String(model_name));
+                }
+            }
+
+            codex_adapter::send_codex_message(stdin, "turn/start", turn_params).await?;
+            Ok(true)
+        }
+        CODEX_RENAME_COMMAND => {
+            let new_name = match trim_to_option(Some(&invocation.args)) {
+                Some(name) => name,
+                None => {
+                    append_and_emit_assistant_message(
+                        session_id,
+                        "Usage: /rename <new thread name>".to_string(),
+                        app,
+                    )
+                    .await?;
+                    emit_codex_turn_completed(session_id, app).await;
+                    return Ok(true);
+                }
+            };
+
+            codex_adapter::send_codex_message(
+                stdin,
+                "thread/name/set",
+                json!({
+                    "threadId": thread_id,
+                    "name": new_name,
+                }),
+            )
+            .await?;
+
+            let mut data = state.data.lock().await;
+            if let Some(session) = data.sessions.iter_mut().find(|s| s.id == session_id) {
+                session.name = new_name.clone();
+                session.updated_at = chrono::Utc::now().timestamp_millis();
+                storage::save_data(&data).await?;
+            }
+            drop(data);
+
+            let _ = app.emit(
+                "session-event",
+                SessionEvent {
+                    session_id: session_id.to_string(),
+                    event_type: "session_renamed".to_string(),
+                    data: json!({ "name": new_name }),
+                },
+            );
+
+            append_and_emit_assistant_message(
+                session_id,
+                "Requested thread rename.".to_string(),
+                app,
+            )
+            .await?;
+            emit_codex_turn_completed(session_id, app).await;
+            Ok(true)
+        }
+        CODEX_MODEL_COMMAND => {
+            handle_codex_model_slash_command(session_id, &invocation.args, state, app).await?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 async fn handle_codex_status_command(
@@ -770,22 +1230,7 @@ async fn handle_codex_status_command(
     lines.push(usage_line);
 
     append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
-
-    let _ = app.emit(
-        "session-event",
-        SessionEvent {
-            session_id: session_id.to_string(),
-            event_type: "codex_message".to_string(),
-            data: json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed",
-                    }
-                }
-            }),
-        },
-    );
+    emit_codex_turn_completed(session_id, app).await;
 
     Ok(())
 }
