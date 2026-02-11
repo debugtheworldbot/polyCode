@@ -81,7 +81,7 @@ export function Sidebar() {
       </div>
 
       {/* Tree Section */}
-      <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
+      <div className="sidebar-section sidebar-scroll">
         <ProjectTree />
       </div>
 
