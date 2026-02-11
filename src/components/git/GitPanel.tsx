@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download, GitBranch, RefreshCw, Undo2, Upload } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, ChevronDown, ChevronRight, Download, FileCode, FolderSearch, MoreHorizontal, RefreshCw, Undo2, Upload } from 'lucide-react';
 import { html as diffToHtml } from 'diff2html';
 import 'diff2html/bundles/css/diff2html.min.css';
 import { useAppStore } from '../../store';
@@ -12,20 +12,7 @@ import {
   unstageGitFile,
 } from '../../services/tauri';
 
-type BadgeTone = 'added' | 'modified' | 'deleted' | 'conflict';
-
-function statusCode(file: GitFileStatus): string {
-  if (file.untracked) return '??';
-  return `${file.index_status}${file.worktree_status}`;
-}
-
-function statusTone(file: GitFileStatus): BadgeTone {
-  const code = statusCode(file);
-  if (file.conflicted) return 'conflict';
-  if (code.includes('D')) return 'deleted';
-  if (file.untracked || code.includes('A')) return 'added';
-  return 'modified';
-}
+type GitTab = 'unstaged' | 'staged';
 
 function renderPatch(patch: string | null): string | null {
   if (!patch || !patch.trim()) return null;
@@ -35,6 +22,7 @@ function renderPatch(patch: string | null): string | null {
       matching: 'lines',
       outputFormat: 'line-by-line',
       diffStyle: 'word',
+      renderNothingWhenEmpty: true,
     });
   } catch (error) {
     console.error('Failed to render patch:', error);
@@ -43,25 +31,40 @@ function renderPatch(patch: string | null): string | null {
 }
 
 export function GitPanel() {
-  const { activeProjectId, projects, showGitPanel } = useAppStore();
+  const { activeProjectId, showGitPanel } = useAppStore();
 
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [diff, setDiff] = useState<GitFileDiffResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<GitTab>('unstaged');
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [diffs, setDiffs] = useState<Record<string, GitFileDiffResponse>>({});
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [loadingDiffs, setLoadingDiffs] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
+  const hasAutoExpandedRef = useRef(false);
 
-  const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
-  const files = status?.files ?? [];
-  const selectedFile = selectedPath ? files.find((f) => f.path === selectedPath) ?? null : null;
+  const unstagedFiles = useMemo(() => 
+    status?.files.filter(f => f.unstaged || f.untracked) ?? [], 
+    [status?.files]
+  );
+  const stagedFiles = useMemo(() => 
+    status?.files.filter(f => f.staged) ?? [], 
+    [status?.files]
+  );
+
+  const currentFiles = activeTab === 'unstaged' ? unstagedFiles : stagedFiles;
+
+  useEffect(() => {
+    hasAutoExpandedRef.current = false;
+    setExpandedFiles(new Set());
+    setDiffs({});
+  }, [activeProjectId]);
 
   const loadStatus = useCallback(async () => {
     if (!activeProjectId) {
       setStatus(null);
-      setSelectedPath(null);
-      setDiff(null);
+      setDiffs({});
+      hasAutoExpandedRef.current = false;
       return;
     }
 
@@ -70,14 +73,13 @@ export function GitPanel() {
     try {
       const next = await getGitStatus(activeProjectId);
       setStatus(next);
-      setSelectedPath((prev) => {
-        if (next.files.length === 0) return null;
-        if (prev && next.files.some((file) => file.path === prev)) return prev;
-        return next.files[0].path;
-      });
+      // Auto-expand only once per project switch.
+      if (next.files.length > 0 && !hasAutoExpandedRef.current) {
+        setExpandedFiles(new Set([next.files[0].path]));
+        hasAutoExpandedRef.current = true;
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load git status';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to load git status');
     } finally {
       setLoadingStatus(false);
     }
@@ -88,36 +90,45 @@ export function GitPanel() {
     void loadStatus();
   }, [loadStatus, showGitPanel]);
 
-  useEffect(() => {
-    if (!showGitPanel || !activeProjectId || !selectedPath) {
-      setDiff(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingDiff(true);
-    setError(null);
-
-    void getGitFileDiff(activeProjectId, selectedPath)
-      .then((payload) => {
-        if (!cancelled) setDiff(payload);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Failed to load git diff';
-        setError(message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingDiff(false);
+  const loadDiff = useCallback(async (path: string) => {
+    if (!activeProjectId) return;
+    setLoadingDiffs(prev => new Set(prev).add(path));
+    try {
+      const diff = await getGitFileDiff(activeProjectId, path);
+      setDiffs(prev => ({ ...prev, [path]: diff }));
+    } catch (err) {
+      console.error(`Failed to load diff for ${path}:`, err);
+    } finally {
+      setLoadingDiffs(prev => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
       });
+    }
+  }, [activeProjectId]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProjectId, selectedPath, showGitPanel]);
+  useEffect(() => {
+    for (const path of expandedFiles) {
+      if (!diffs[path] && !loadingDiffs.has(path)) {
+        void loadDiff(path);
+      }
+    }
+  }, [diffs, expandedFiles, loadDiff, loadingDiffs]);
 
-  const stagedHtml = useMemo(() => renderPatch(diff?.staged_patch ?? null), [diff?.staged_patch]);
-  const unstagedHtml = useMemo(() => renderPatch(diff?.unstaged_patch ?? null), [diff?.unstaged_patch]);
+  const toggleExpand = useCallback((path: string) => {
+    setExpandedFiles(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        if (!diffs[path]) {
+          void loadDiff(path);
+        }
+      }
+      return next;
+    });
+  }, [diffs, loadDiff]);
 
   const runAction = useCallback(
     async (file: GitFileStatus, action: 'stage' | 'unstage' | 'discard') => {
@@ -131,17 +142,15 @@ export function GitPanel() {
         } else if (action === 'unstage') {
           await unstageGitFile(activeProjectId, file.path);
         } else {
-          const confirmed = window.confirm(
-            `Discard all changes for "${file.path}"? This cannot be undone.`
-          );
+          const confirmed = window.confirm(`Discard all changes for "${file.path}"?`);
           if (!confirmed) return;
           await discardGitFile(activeProjectId, file.path, file.untracked);
         }
-
+        setDiffs({});
+        setLoadingDiffs(new Set());
         await loadStatus();
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Git action failed';
-        setError(message);
+        setError(err instanceof Error ? err.message : 'Git action failed');
       } finally {
         setActionKey(null);
       }
@@ -149,165 +158,188 @@ export function GitPanel() {
     [activeProjectId, loadStatus]
   );
 
+  const runBulkAction = useCallback(
+    async (action: 'stageAll' | 'revertAll') => {
+      if (!activeProjectId || !status) return;
+
+      const files = action === 'stageAll'
+        ? status.files.filter((file) => file.unstaged || file.untracked)
+        : status.files;
+
+      if (files.length === 0) return;
+
+      if (action === 'revertAll') {
+        const confirmed = window.confirm(`Revert all changes for ${files.length} file(s)? This cannot be undone.`);
+        if (!confirmed) return;
+      }
+
+      const key = action === 'stageAll' ? 'bulk:stage-all' : 'bulk:revert-all';
+      setActionKey(key);
+      setError(null);
+      try {
+        for (const file of files) {
+          if (action === 'stageAll') {
+            await stageGitFile(activeProjectId, file.path);
+          } else {
+            await discardGitFile(activeProjectId, file.path, file.untracked);
+          }
+        }
+        setDiffs({});
+        setLoadingDiffs(new Set());
+        await loadStatus();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Git action failed');
+      } finally {
+        setActionKey(null);
+      }
+    },
+    [activeProjectId, loadStatus, status]
+  );
+
+  const isBusy = loadingStatus || actionKey !== null;
+  const canStageAll = unstagedFiles.length > 0;
+  const canRevertAll = (status?.files.length ?? 0) > 0;
+
   if (!showGitPanel) return null;
 
   return (
     <aside className="git-panel">
-      <div className="git-panel-header">
-        <div className="git-panel-title">
-          <GitBranch size={15} />
-          <span>Git Changes</span>
-          <span className="git-panel-count">{files.length}</span>
+      <div className="git-panel-header-v2">
+        <div className="header-top">
+          <div className="view-selector">
+            <span>Uncommitted changes</span>
+            <ChevronDown size={14} />
+          </div>
+          <div className="header-tabs">
+            <button 
+              className={`tab-btn ${activeTab === 'unstaged' ? 'active' : ''}`}
+              onClick={() => setActiveTab('unstaged')}
+            >
+              Unstaged {unstagedFiles.length > 0 && <span className="tab-count">{unstagedFiles.length}</span>}
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'staged' ? 'active' : ''}`}
+              onClick={() => setActiveTab('staged')}
+            >
+              Staged {stagedFiles.length > 0 && <span className="tab-count">{stagedFiles.length}</span>}
+            </button>
+          </div>
+          <div className="header-actions-right">
+            <button className="git-icon-btn"><FileCode size={15} /></button>
+            <button className="git-icon-btn"><MoreHorizontal size={15} /></button>
+          </div>
         </div>
-        <button
-          className="git-icon-btn"
-          title="Refresh git status"
-          onClick={() => void loadStatus()}
-          disabled={loadingStatus}
-        >
-          <RefreshCw size={14} className={loadingStatus ? 'spinning' : ''} />
-        </button>
       </div>
 
-      <div className="git-panel-meta">
-        <span className="git-branch-name">
-          {status?.is_git_repo ? (status.branch || '(detached HEAD)') : 'Not a git repository'}
-        </span>
-        {!!status?.is_git_repo && (
-          <span className="git-branch-stats">
-            {status.ahead > 0 ? `ahead ${status.ahead}` : ''}
-            {status.ahead > 0 && status.behind > 0 ? ' / ' : ''}
-            {status.behind > 0 ? `behind ${status.behind}` : ''}
-            {status.ahead === 0 && status.behind === 0 ? 'up to date' : ''}
-          </span>
+      <div className="git-panel-content">
+        {!activeProjectId && (
+          <div className="git-empty-state">
+            <div className="empty-state-card">
+              <FolderSearch size={32} strokeWidth={1.5} className="empty-icon" />
+              <h3>No project selected</h3>
+              <p>Select a project from the sidebar to inspect its git status and changes.</p>
+            </div>
+          </div>
         )}
-      </div>
 
-      {activeProject && (
-        <div className="git-project-path" title={activeProject.path}>
-          {activeProject.path}
-        </div>
-      )}
+        {activeProjectId && status?.is_git_repo && currentFiles.length === 0 && (
+          <div className="git-empty-state">
+            <div className="empty-state-card">
+              <CheckCircle2 size={32} strokeWidth={1.5} className="empty-icon success" />
+              <h3>All clear</h3>
+              <p>No {activeTab} changes found. Your working tree is clean.</p>
+            </div>
+          </div>
+        )}
 
-      {error && (
-        <div className="git-panel-error">
-          <AlertTriangle size={14} />
-          <span>{error}</span>
-        </div>
-      )}
+        {error && (
+          <div className="git-error-banner">{error}</div>
+        )}
 
-      <div className="git-panel-body">
-        <section className="git-files-section">
-          {!activeProjectId && (
-            <div className="git-empty">Select a project to inspect git changes.</div>
-          )}
+        <div className="git-unified-list">
+          {currentFiles.map((file) => {
+            const isExpanded = expandedFiles.has(file.path);
+            const diff = diffs[file.path];
+            const patch = activeTab === 'staged' ? diff?.staged_patch : diff?.unstaged_patch;
+            const diffHtml = renderPatch(patch ?? null);
+            const hasPatchContent = Boolean(patch && patch.trim());
+            const isLoading = loadingDiffs.has(file.path);
 
-          {activeProjectId && status && !status.is_git_repo && (
-            <div className="git-empty">Current project is not a git repository.</div>
-          )}
-
-          {activeProjectId && status?.is_git_repo && files.length === 0 && (
-            <div className="git-empty">Working tree clean.</div>
-          )}
-
-          <div className="git-file-list">
-            {files.map((file) => {
-              const tone = statusTone(file);
-              const selected = file.path === selectedPath;
-              const stageKey = `stage:${file.path}`;
-              const unstageKey = `unstage:${file.path}`;
-              const discardKey = `discard:${file.path}`;
-
-              return (
-                <div
-                  key={`${file.path}:${file.old_path ?? ''}`}
-                  className={`git-file-item ${selected ? 'active' : ''}`}
-                  onClick={() => setSelectedPath(file.path)}
-                >
-                  <div className="git-file-main">
-                    <span className={`git-status-pill tone-${tone}`}>{statusCode(file)}</span>
-                    <div className="git-file-labels">
-                      <span className="git-file-path" title={file.path}>{file.path}</span>
-                      {file.old_path && (
-                        <span className="git-file-old-path" title={file.old_path}>
-                          from {file.old_path}
-                        </span>
-                      )}
-                    </div>
+            return (
+              <div key={file.path} className={`git-file-block ${isExpanded ? 'expanded' : ''}`}>
+                <div className="file-header" onClick={() => toggleExpand(file.path)}>
+                  <div className="header-left">
+                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    <span className="file-path">{file.path}</span>
+                    <span className="file-stats">
+                      {/* Placeholder for stats if available */}
+                      <span className="plus">+201</span>
+                      <span className="minus">-141</span>
+                    </span>
                   </div>
-
-                  <div className="git-file-actions" onClick={(e) => e.stopPropagation()}>
-                    {(file.unstaged || file.untracked) && (
-                      <button
-                        className="git-mini-btn"
-                        title="Stage"
-                        disabled={actionKey === stageKey}
-                        onClick={() => void runAction(file, 'stage')}
-                      >
-                        <Upload size={12} />
-                      </button>
-                    )}
-                    {file.staged && (
-                      <button
-                        className="git-mini-btn"
-                        title="Unstage"
-                        disabled={actionKey === unstageKey}
-                        onClick={() => void runAction(file, 'unstage')}
-                      >
-                        <Download size={12} />
-                      </button>
-                    )}
-                    <button
-                      className="git-mini-btn danger"
-                      title="Discard changes"
-                      disabled={actionKey === discardKey}
-                      onClick={() => void runAction(file, 'discard')}
+                  <div className="header-right">
+                    <button 
+                      className="mini-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runAction(file, activeTab === 'unstaged' ? 'stage' : 'unstage');
+                      }}
+                      disabled={isBusy}
                     >
-                      <Undo2 size={12} />
+                      {activeTab === 'unstaged' ? <Upload size={12} /> : <Download size={12} />}
                     </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </section>
 
-        <section className="git-diff-section">
-          {!selectedFile && (
-            <div className="git-empty">Select a changed file to view diff.</div>
-          )}
+                {isExpanded && (
+                  <div className="file-diff-body">
+                    {isLoading && (
+                      <div className="diff-loading">
+                        <RefreshCw size={14} className="spinning" />
+                        <span>Loading diff...</span>
+                      </div>
+                    )}
+                    {!isLoading && !diffHtml && !hasPatchContent && (
+                      <div className="diff-empty">Binary or empty changes</div>
+                    )}
+                    {!isLoading && !diffHtml && hasPatchContent && (
+                      <div className="diff-empty">Unable to render diff</div>
+                    )}
+                    {!isLoading && diffHtml && (
+                      <div 
+                        className="diff-rendered"
+                        dangerouslySetInnerHTML={{ __html: diffHtml }}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-          {selectedFile && (
-            <div className="git-diff-content">
-              <div className="git-diff-title">{selectedFile.path}</div>
-              {loadingDiff && <div className="git-empty">Loading diff…</div>}
-
-              {!loadingDiff && !stagedHtml && !unstagedHtml && (
-                <div className="git-empty">No textual diff available for this file.</div>
-              )}
-
-              {!loadingDiff && stagedHtml && (
-                <div className="git-diff-block">
-                  <div className="git-diff-block-title">Staged</div>
-                  <div
-                    className="git-diff-render"
-                    dangerouslySetInnerHTML={{ __html: stagedHtml }}
-                  />
-                </div>
-              )}
-
-              {!loadingDiff && unstagedHtml && (
-                <div className="git-diff-block">
-                  <div className="git-diff-block-title">Unstaged</div>
-                  <div
-                    className="git-diff-render"
-                    dangerouslySetInnerHTML={{ __html: unstagedHtml }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-        </section>
+      <div className="git-panel-footer-pill">
+        <button
+          className="footer-btn"
+          onClick={() => {
+            void runBulkAction('revertAll');
+          }}
+          disabled={isBusy || !canRevertAll}
+        >
+          <Undo2 size={14} />
+          <span>Revert all</span>
+        </button>
+        <button
+          className="footer-btn primary"
+          onClick={() => {
+            void runBulkAction('stageAll');
+          }}
+          disabled={isBusy || !canStageAll}
+        >
+          <Upload size={14} />
+          <span>Stage all</span>
+        </button>
       </div>
     </aside>
   );
