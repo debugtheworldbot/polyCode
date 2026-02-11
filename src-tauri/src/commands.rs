@@ -897,15 +897,22 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, Str
 
 #[tauri::command]
 pub async fn update_settings(
-    settings: AppSettings,
+    mut settings: AppSettings,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    settings.window_transparency = settings.window_transparency.min(100);
+
     let mut data = state.data.lock().await;
     data.settings = settings.clone();
     storage::save_data(&data).await?;
+    drop(data);
 
     let mut s = state.settings.lock().await;
-    *s = settings;
+    *s = settings.clone();
+    drop(s);
+
+    crate::apply_liquid_glass_effect(&app, settings.window_transparency);
 
     Ok(())
 }

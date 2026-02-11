@@ -6,7 +6,7 @@ import { SessionHeader } from './components/session/SessionHeader';
 import { MessageView } from './components/session/MessageView';
 import { Composer } from './components/composer/Composer';
 import { SettingsPanel } from './components/settings/SettingsPanel';
-import { applyTheme } from './components/settings/SettingsPanel';
+import { applyTheme, applyWindowTransparency } from './components/settings/SettingsPanel';
 import { NewProjectDialog } from './components/common/NewProjectDialog';
 import { NewSessionDialog } from './components/common/NewSessionDialog';
 import { GitPanel } from './components/git/GitPanel';
@@ -22,6 +22,10 @@ export default function App() {
   useEffect(() => {
     applyTheme(settings.theme);
   }, [settings.theme]);
+
+  useEffect(() => {
+    applyWindowTransparency(settings.window_transparency);
+  }, [settings.window_transparency]);
 
   // Listen for session events from Tauri backend
   useEffect(() => {

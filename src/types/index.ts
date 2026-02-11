@@ -35,6 +35,7 @@ export interface AppSettings {
   claude_bin: string | null;
   theme: string;
   language: string;
+  window_transparency: number;
 }
 
 export interface SessionEvent {

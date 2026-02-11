@@ -3,6 +3,8 @@ import type { Project, Session, ChatMessage, AppSettings, SessionEvent, AIProvid
 import * as api from '../services/tauri';
 import { setLanguage } from '../i18n';
 
+const DEFAULT_WINDOW_TRANSPARENCY = 80;
+
 type JsonRecord = Record<string, unknown>;
 type InsertMode = 'append' | 'replace_or_create' | 'new';
 
@@ -576,6 +578,17 @@ function savePersisted(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
+function normalizeSettings(settings: AppSettings): AppSettings {
+  const clampedTransparency = Number.isFinite(settings.window_transparency)
+    ? Math.max(0, Math.min(100, Math.round(settings.window_transparency)))
+    : DEFAULT_WINDOW_TRANSPARENCY;
+
+  return {
+    ...settings,
+    window_transparency: clampedTransparency,
+  };
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   // ─── Initial State ───
   projects: [],
@@ -595,6 +608,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     claude_bin: null,
     theme: 'light',
     language: 'system',
+    window_transparency: DEFAULT_WINDOW_TRANSPARENCY,
   },
   isSending: false,
   showSettings: false,
@@ -1120,7 +1134,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // ─── Settings Actions ───
   loadSettings: async () => {
     try {
-      const settings = await api.getSettings();
+      const settings = normalizeSettings(await api.getSettings());
       set({ settings });
       setLanguage(settings.language || 'system');
     } catch (e) {
@@ -1130,9 +1144,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateSettings: async (settings: AppSettings) => {
     try {
-      await api.updateSettings(settings);
-      set({ settings });
-      setLanguage(settings.language || 'system');
+      const normalized = normalizeSettings(settings);
+      await api.updateSettings(normalized);
+      set({ settings: normalized });
+      setLanguage(normalized.language || 'system');
     } catch (e) {
       console.error('Failed to update settings:', e);
       throw e;

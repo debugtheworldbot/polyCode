@@ -64,6 +64,12 @@ pub struct AppSettings {
     pub claude_bin: Option<String>,
     pub theme: String,
     pub language: String,
+    #[serde(default = "default_window_transparency")]
+    pub window_transparency: u8,
+}
+
+fn default_window_transparency() -> u8 {
+    80
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +106,7 @@ impl Default for AppSettings {
             claude_bin: None,
             theme: "light".to_string(),
             language: "system".to_string(),
+            window_transparency: default_window_transparency(),
         }
     }
 }
