@@ -243,6 +243,12 @@ export function Composer() {
     await sendMessage(msg);
   };
 
+  const handleQuickCommitThis = async () => {
+    if (!activeSessionId) return;
+    setShowSlashPopover(false);
+    await sendMessage('commit this');
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSlashPopover) {
       if (e.key === 'ArrowDown') {
@@ -444,6 +450,9 @@ export function Composer() {
           <div className="composer-actions-left">
             <button className="icon-btn" title={t('composer.addImage')} onClick={handlePickImages}>
               <Plus size={18} />
+            </button>
+            <button type="button" className="composer-shortcut-btn" onClick={handleQuickCommitThis}>
+              commit this
             </button>
             <span className={`model-status ${statusClassName}`} style={{ fontSize: '12px', marginLeft: '2px' }}>
               <span className="model-status-dot" />

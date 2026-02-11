@@ -1169,6 +1169,26 @@ body {
   color: var(--color-text-muted);
 }
 
+.composer-shortcut-btn {
+  border: 1px solid color-mix(in srgb, var(--color-border) 86%, transparent);
+  background: color-mix(in srgb, var(--color-bg) 90%, transparent);
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.composer-shortcut-btn:hover {
+  background: var(--color-sidebar-hover);
+  color: var(--color-text);
+  border-color: color-mix(in srgb, var(--color-border) 68%, transparent);
+}
+
 .composer-footer {
   display: flex;
   align-items: center;
