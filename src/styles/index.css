@@ -739,7 +739,15 @@ body {
   scroll-padding-bottom: var(--composer-safe-padding);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 0;
+}
+
+.messages-area > * + * {
+  margin-top: 24px;
+}
+
+.messages-area > .message-bubble.tool + .message-bubble.tool {
+  margin-top: 8px;
 }
 
 /* User Message: Rounded Gray Bubble */

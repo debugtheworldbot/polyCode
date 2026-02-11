@@ -120,7 +120,6 @@ export function ProjectTree() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
       {projects.map((project) => {
         const isExpanded = !!expandedProjects[project.id];
-        const isActive = activeProjectId === project.id;
         const allSessions = (sessionsByProject[project.id] || [])
           .slice()
           .sort((a, b) => b.updated_at - a.updated_at);
@@ -133,7 +132,7 @@ export function ProjectTree() {
           <div key={project.id}>
             {/* Project row */}
             <div
-              className={`sidebar-item ${isActive ? 'active' : ''}`}
+              className="sidebar-item"
               onClick={() => handleProjectClick(project.id)}
               onContextMenu={(e) => handleProjectContext(e, project.id)}
             >
@@ -141,7 +140,7 @@ export function ProjectTree() {
                 ? <ChevronDown size={14} style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }} />
                 : <ChevronRight size={14} style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }} />
               }
-              <Folder size={15} style={{ flexShrink: 0, color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)' }} />
+              <Folder size={15} style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }} />
               <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {editingId === project.id ? (
                   <input

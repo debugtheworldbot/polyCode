@@ -204,6 +204,7 @@ export function MessageView() {
     isSending,
   } = useAppStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const [now, setNow] = useState(Date.now());
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
@@ -214,6 +215,11 @@ export function MessageView() {
   const turnStartedAt = activeSessionId ? activeTurnStartedAt[activeSessionId] : undefined;
 
   useEffect(() => {
+    shouldAutoScrollRef.current = true;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentMessages, queuedItems, isSending]);
 
@@ -240,7 +246,14 @@ export function MessageView() {
   }
 
   return (
-    <div className="messages-area">
+    <div
+      className="messages-area"
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+        shouldAutoScrollRef.current = nearBottom;
+      }}
+    >
       {currentMessages.length === 0 && queuedCount === 0 && (
         <div className="empty-state" style={{ flex: 1 }}>
           <div style={{
