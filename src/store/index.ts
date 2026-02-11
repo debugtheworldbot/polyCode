@@ -342,6 +342,25 @@ function createMessage(sessionId: string, parsed: ParsedEventMessage): ChatMessa
   };
 }
 
+function mergeAppendContent(existingContent: string, incomingContent: string): string {
+  if (!existingContent) return incomingContent;
+  if (!incomingContent) return existingContent;
+  if (incomingContent === existingContent) return existingContent;
+
+  // Support providers that stream either incremental deltas or cumulative text.
+  if (incomingContent.startsWith(existingContent)) return incomingContent;
+  if (existingContent.endsWith(incomingContent)) return existingContent;
+
+  const maxOverlap = Math.min(existingContent.length, incomingContent.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (existingContent.slice(-overlap) === incomingContent.slice(0, overlap)) {
+      return `${existingContent}${incomingContent.slice(overlap)}`;
+    }
+  }
+
+  return `${existingContent}${incomingContent}`;
+}
+
 function mergeMessage(
   existing: ChatMessage[],
   sessionId: string,
@@ -357,10 +376,12 @@ function mergeMessage(
 
   if (parsed.mode === 'append') {
     if (isSameKind) {
+      const mergedContent = mergeAppendContent(last.content, parsed.content);
+      if (mergedContent === last.content) return existing;
       const updated = [...existing];
       updated[updated.length - 1] = {
         ...last,
-        content: `${last.content}${parsed.content}`,
+        content: mergedContent,
       };
       return updated;
     }
@@ -815,20 +836,47 @@ function readTokenBreakdown(value: unknown): {
   };
 }
 
-function parseCodexContextUsage(data: JsonRecord): SessionContextUsage | null {
+function readCodexTokenUsageRecord(data: JsonRecord): JsonRecord | null {
   const method = asString(data.method);
-  if (!method || normalizeItemType(method) !== normalizeItemType('thread/tokenUsage/updated')) {
-    return null;
+  if (method && normalizeItemType(method) === normalizeItemType('thread/tokenUsage/updated')) {
+    const params = isRecord(data.params) ? data.params : null;
+    if (!params) return null;
+
+    const usage = isRecord(params.tokenUsage)
+      ? params.tokenUsage
+      : isRecord(params.token_usage)
+        ? params.token_usage
+        : null;
+    if (usage) return usage;
   }
 
-  const params = isRecord(data.params) ? data.params : null;
-  if (!params) return null;
+  const topLevelType = asString(data.type);
+  if (
+    topLevelType &&
+    (normalizeItemType(topLevelType) === normalizeItemType('token_count') ||
+      normalizeItemType(topLevelType) === normalizeItemType('token_usage'))
+  ) {
+    const info = isRecord(data.info) ? data.info : null;
+    if (info) return info;
+  }
 
-  const usage = isRecord(params.tokenUsage)
-    ? params.tokenUsage
-    : isRecord(params.token_usage)
-      ? params.token_usage
-      : null;
+  const payload = isRecord(data.payload) ? data.payload : null;
+  const payloadType = payload ? asString(payload.type) : null;
+  if (
+    payload &&
+    payloadType &&
+    (normalizeItemType(payloadType) === normalizeItemType('token_count') ||
+      normalizeItemType(payloadType) === normalizeItemType('token_usage'))
+  ) {
+    const info = isRecord(payload.info) ? payload.info : null;
+    if (info) return info;
+  }
+
+  return null;
+}
+
+function parseCodexContextUsage(data: JsonRecord): SessionContextUsage | null {
+  const usage = readCodexTokenUsageRecord(data);
   if (!usage) return null;
 
   const total = readTokenBreakdown(usage.total ?? usage.total_token_usage);
@@ -838,14 +886,16 @@ function parseCodexContextUsage(data: JsonRecord): SessionContextUsage | null {
     total;
 
   const maxTokens = asCount(usage.modelContextWindow ?? usage.model_context_window);
+  const contextUsedTokens = last.totalTokens;
   const usagePercent = maxTokens && maxTokens > 0
-    ? Math.min(100, (total.totalTokens / maxTokens) * 100)
+    ? Math.min(100, (contextUsedTokens / maxTokens) * 100)
     : null;
 
   return {
-    usedTokens: total.totalTokens,
+    usedTokens: contextUsedTokens,
     maxTokens,
     usagePercent,
+    sessionTotalTokens: total.totalTokens,
     totalInputTokens: total.inputTokens,
     totalOutputTokens: total.outputTokens,
     totalCachedInputTokens: total.cachedInputTokens,
@@ -865,6 +915,7 @@ interface SessionContextUsage {
   usedTokens: number;
   maxTokens: number | null;
   usagePercent: number | null;
+  sessionTotalTokens: number;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCachedInputTokens: number;
@@ -890,7 +941,7 @@ interface AppStore {
   activeTurnStartedAt: Record<string, number>;
   claudeToolBlocks: Record<string, ClaudeToolBlock>;
   settings: AppSettings;
-  isSending: boolean;
+  sendingBySession: Record<string, boolean>;
   showSettings: boolean;
   showNewProjectDialog: boolean;
   showNewSessionDialog: boolean;
@@ -997,7 +1048,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     language: 'system',
     window_transparency: DEFAULT_WINDOW_TRANSPARENCY,
   },
-  isSending: false,
+  sendingBySession: {},
   showSettings: false,
   showNewProjectDialog: false,
   showNewSessionDialog: false,
@@ -1155,8 +1206,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
           sessionsByProject[pid] = sessionsByProject[pid].filter((s) => s.id !== sessionId);
         }
         const contextUsageBySession = { ...state.contextUsageBySession };
+        const sendingBySession = { ...state.sendingBySession };
         delete contextUsageBySession[sessionId];
-        return { sessions, activeSessionId, sessionsByProject, contextUsageBySession };
+        delete sendingBySession[sessionId];
+        return { sessions, activeSessionId, sessionsByProject, contextUsageBySession, sendingBySession };
       });
     } catch (e) {
       console.error('Failed to remove session:', e);
@@ -1207,18 +1260,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
   stopSession: async (sessionId: string) => {
     try {
       await api.stopSession(sessionId);
-    set({ isSending: false });
-    set((state) => {
-      const nextStatus = { ...state.liveStatusBySession };
-      const nextStart = { ...state.activeTurnStartedAt };
-      delete nextStatus[sessionId];
-      delete nextStart[sessionId];
-      return {
-        liveStatusBySession: nextStatus,
-        activeTurnStartedAt: nextStart,
-      };
-    });
-    void get().flushQueuedMessages(sessionId);
+      set((state) => {
+        const nextSending = { ...state.sendingBySession };
+        const nextStatus = { ...state.liveStatusBySession };
+        const nextStart = { ...state.activeTurnStartedAt };
+        delete nextSending[sessionId];
+        delete nextStatus[sessionId];
+        delete nextStart[sessionId];
+        return {
+          sendingBySession: nextSending,
+          liveStatusBySession: nextStatus,
+          activeTurnStartedAt: nextStart,
+        };
+      });
+      void get().flushQueuedMessages(sessionId);
     } catch (e) {
       console.error('Failed to stop session:', e);
     }
@@ -1268,7 +1323,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const trimmed = content.trim();
     if (!sessionId || !trimmed) return;
 
-    if (get().isSending) {
+    if (get().sendingBySession[sessionId]) {
       set((state) => {
         const existing = state.queuedMessages[sessionId] || [];
         return {
@@ -1281,8 +1336,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    set({ isSending: true });
     set((state) => ({
+      sendingBySession: {
+        ...state.sendingBySession,
+        [sessionId]: true,
+      },
       liveStatusBySession: {
         ...state.liveStatusBySession,
         [sessionId]: 'Thinking',
@@ -1296,9 +1354,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await api.sendMessage(sessionId, trimmed);
     } catch (e) {
       console.error('Failed to send message:', e);
-      set({ isSending: false });
       const errorMsg = formatErrorMessage(e);
       set((state) => {
+        const nextSending = { ...state.sendingBySession };
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
         const existing = state.messages[sessionId] || [];
@@ -1308,9 +1366,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
           content: errorMsg,
           mode: 'new',
         });
+        delete nextSending[sessionId];
         delete nextStatus[sessionId];
         delete nextStart[sessionId];
         return {
+          sendingBySession: nextSending,
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
           messages: updated === existing ? state.messages : { ...state.messages, [sessionId]: updated },
@@ -1320,7 +1380,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   flushQueuedMessages: async (sessionId: string) => {
-    if (!sessionId || get().isSending) return;
+    if (!sessionId || get().sendingBySession[sessionId]) return;
 
     const queue = get().queuedMessages[sessionId] || [];
     if (queue.length === 0) return;
@@ -1404,13 +1464,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       const method = asString((data as JsonRecord).method);
       if (method === 'turn/completed') {
-        set({ isSending: false });
         set((state) => {
+          const nextSending = { ...state.sendingBySession };
           const nextStatus = { ...state.liveStatusBySession };
           const nextStart = { ...state.activeTurnStartedAt };
+          delete nextSending[session_id];
           delete nextStatus[session_id];
           delete nextStart[session_id];
           return {
+            sendingBySession: nextSending,
             liveStatusBySession: nextStatus,
             activeTurnStartedAt: nextStart,
           };
@@ -1623,13 +1685,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (event_type === 'gemini_result') {
-      set({ isSending: false });
       set((state) => {
+        const nextSending = { ...state.sendingBySession };
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
+        delete nextSending[session_id];
         delete nextStatus[session_id];
         delete nextStart[session_id];
         return {
+          sendingBySession: nextSending,
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
         };
@@ -1657,15 +1721,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle Claude result (final message)
     if (event_type === 'claude_result') {
-      set({ isSending: false });
       set((state) => {
+        const nextSending = { ...state.sendingBySession };
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
         const nextBlocks = { ...state.claudeToolBlocks };
+        delete nextSending[session_id];
         delete nextStatus[session_id];
         delete nextStart[session_id];
         delete nextBlocks[session_id];
         return {
+          sendingBySession: nextSending,
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
           claudeToolBlocks: nextBlocks,
@@ -1708,15 +1774,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     // Handle errors
     if (event_type === 'codex_error' || event_type === 'claude_error' || event_type === 'gemini_error') {
-      set({ isSending: false });
       set((state) => {
+        const nextSending = { ...state.sendingBySession };
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
         const nextBlocks = { ...state.claudeToolBlocks };
+        delete nextSending[session_id];
         delete nextStatus[session_id];
         delete nextStart[session_id];
         delete nextBlocks[session_id];
         return {
+          sendingBySession: nextSending,
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
           claudeToolBlocks: nextBlocks,
