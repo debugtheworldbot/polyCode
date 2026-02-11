@@ -1218,16 +1218,17 @@ async fn handle_codex_status_command(
 
     let mut lines = Vec::new();
     lines.push(format!("OpenAI Codex ({})", cli_version));
-    lines.push(format!("Model: {} (reasoning {})", model_name, reasoning));
-    lines.push(format!("Directory: {}", project_path));
-    lines.push(format!("Approval: {}", approval));
-    lines.push(format!("Sandbox: {}", sandbox));
-    lines.push(format!("AGENTS.md: {}", agents_md));
-    lines.push(format!("Account: {}", account_display));
-    lines.push(format!("Session: {}", thread_id));
-    lines.push(format!("Personality: {}", personality));
-    lines.push("Context window: unavailable".to_string());
-    lines.push(usage_line);
+    lines.push(String::new());
+    lines.push(format!("- Model: {} (reasoning {})", model_name, reasoning));
+    lines.push(format!("- Directory: {}", project_path));
+    lines.push(format!("- Approval: {}", approval));
+    lines.push(format!("- Sandbox: {}", sandbox));
+    lines.push(format!("- AGENTS.md: {}", agents_md));
+    lines.push(format!("- Account: {}", account_display));
+    lines.push(format!("- Session: {}", thread_id));
+    lines.push(format!("- Personality: {}", personality));
+    lines.push("- Context window: unavailable".to_string());
+    lines.push(format!("- {}", usage_line));
 
     append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
     emit_codex_turn_completed(session_id, app).await;
