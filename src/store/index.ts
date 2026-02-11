@@ -1,9 +1,18 @@
 import { create } from 'zustand';
-import type { Project, Session, ChatMessage, AppSettings, SessionEvent, AIProvider } from '../types';
+import type {
+  Project,
+  Session,
+  ChatMessage,
+  AppSettings,
+  SessionEvent,
+  AIProvider,
+  ClaudePermissionMode,
+} from '../types';
 import * as api from '../services/tauri';
 import { setLanguage } from '../i18n';
 
 const DEFAULT_WINDOW_TRANSPARENCY = 80;
+const DEFAULT_CLAUDE_PERMISSION_MODE: ClaudePermissionMode = 'acceptEdits';
 
 type JsonRecord = Record<string, unknown>;
 type InsertMode = 'append' | 'replace_or_create' | 'new';
@@ -716,10 +725,26 @@ function normalizeSettings(settings: AppSettings): AppSettings {
     ? Math.max(0, Math.min(100, Math.round(settings.window_transparency)))
     : DEFAULT_WINDOW_TRANSPARENCY;
 
+  const claudePermissionMode = normalizeClaudePermissionMode(settings.claude_permission_mode);
+
   return {
     ...settings,
+    claude_permission_mode: claudePermissionMode,
     window_transparency: clampedTransparency,
   };
+}
+
+function normalizeClaudePermissionMode(mode: unknown): ClaudePermissionMode {
+  switch (mode) {
+    case 'acceptEdits':
+    case 'bypassPermissions':
+    case 'default':
+    case 'dontAsk':
+    case 'plan':
+      return mode;
+    default:
+      return DEFAULT_CLAUDE_PERMISSION_MODE;
+  }
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -741,6 +766,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: {
     codex_bin: null,
     claude_bin: null,
+    claude_permission_mode: DEFAULT_CLAUDE_PERMISSION_MODE,
     theme: 'light',
     language: 'system',
     window_transparency: DEFAULT_WINDOW_TRANSPARENCY,
@@ -902,7 +928,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         for (const pid of Object.keys(sessionsByProject)) {
           sessionsByProject[pid] = sessionsByProject[pid].filter((s) => s.id !== sessionId);
         }
-        return { sessions, activeSessionId, sessionsByProject };
+        const contextUsageBySession = { ...state.contextUsageBySession };
+        delete contextUsageBySession[sessionId];
+        return { sessions, activeSessionId, sessionsByProject, contextUsageBySession };
       });
     } catch (e) {
       console.error('Failed to remove session:', e);
@@ -1098,6 +1126,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
+    if (event_type === 'assistant_message') {
+      const msg = data as unknown as ChatMessage;
+      set((state) => {
+        const existing = state.messages[session_id] || [];
+        if (existing.some((m) => m.id === msg.id)) return state;
+        return {
+          messages: { ...state.messages, [session_id]: [...existing, msg] },
+        };
+      });
+      return;
+    }
+
     if (event_type === 'session_renamed') {
       const newName = asString(data.name);
       if (!newName) return;
@@ -1117,6 +1157,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (event_type === 'codex_message') {
+      const contextUsage = parseCodexContextUsage(data);
+      if (contextUsage) {
+        set((state) => ({
+          contextUsageBySession: {
+            ...state.contextUsageBySession,
+            [session_id]: contextUsage,
+          },
+        }));
+      }
+
       const method = asString((data as JsonRecord).method);
       if (method === 'turn/completed') {
         set({ isSending: false });

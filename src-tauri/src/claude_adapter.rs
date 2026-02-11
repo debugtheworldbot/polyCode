@@ -18,6 +18,17 @@ fn resolve_claude_bin(custom: &Option<String>) -> String {
     "claude".to_string()
 }
 
+fn resolve_claude_permission_mode(mode: &str) -> &str {
+    match mode.trim() {
+        "acceptEdits" => "acceptEdits",
+        "bypassPermissions" => "bypassPermissions",
+        "default" => "default",
+        "dontAsk" => "dontAsk",
+        "plan" => "plan",
+        _ => "acceptEdits",
+    }
+}
+
 /// Spawn a Claude Code CLI process for a message
 /// Claude Code uses `claude -p "<prompt>" --output-format stream-json`
 /// For continuing conversations, use `--resume <session_id>`
@@ -26,17 +37,22 @@ pub async fn spawn_claude_session(
     project_path: String,
     prompt: String,
     claude_bin: Option<String>,
+    claude_permission_mode: String,
     model: Option<String>,
     provider_session_id: Option<String>,
     app_handle: AppHandle,
 ) -> Result<tokio::process::Child, String> {
     let bin = resolve_claude_bin(&claude_bin);
+    let permission_mode = resolve_claude_permission_mode(&claude_permission_mode);
 
     let mut cmd = Command::new(&bin);
     cmd.arg("-p")
         .arg(&prompt)
         .arg("--output-format")
         .arg("stream-json")
+        // `-p` is non-interactive, so choose a permission strategy up front.
+        .arg("--permission-mode")
+        .arg(permission_mode)
         .arg("--verbose");
 
     if let Some(model_name) = model {

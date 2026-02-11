@@ -62,10 +62,16 @@ pub struct ChatMessage {
 pub struct AppSettings {
     pub codex_bin: Option<String>,
     pub claude_bin: Option<String>,
+    #[serde(default = "default_claude_permission_mode")]
+    pub claude_permission_mode: String,
     pub theme: String,
     pub language: String,
     #[serde(default = "default_window_transparency")]
     pub window_transparency: u8,
+}
+
+fn default_claude_permission_mode() -> String {
+    "acceptEdits".to_string()
 }
 
 fn default_window_transparency() -> u8 {
@@ -99,11 +105,18 @@ pub struct GitFileDiffResponse {
     pub unstaged_patch: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlashCommand {
+    pub command: String,
+    pub description: String,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             codex_bin: None,
             claude_bin: None,
+            claude_permission_mode: default_claude_permission_mode(),
             theme: "light".to_string(),
             language: "system".to_string(),
             window_transparency: default_window_transparency(),

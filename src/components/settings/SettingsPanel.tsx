@@ -199,6 +199,21 @@ export function SettingsPanel() {
                 style={{ marginTop: '4px' }}
               />
             </div>
+
+            <div className="settings-row" style={{ marginTop: '16px' }}>
+              <label>{t('settings.claudePermissionMode')}</label>
+              <select
+                className="settings-select"
+                value={localSettings.claude_permission_mode}
+                onChange={(e) => setLocalSettings({ ...localSettings, claude_permission_mode: e.target.value as AppSettings['claude_permission_mode'] })}
+              >
+                <option value="acceptEdits">{t('settings.claudePermissionAcceptEdits')}</option>
+                <option value="default">{t('settings.claudePermissionDefault')}</option>
+                <option value="dontAsk">{t('settings.claudePermissionDontAsk')}</option>
+                <option value="plan">{t('settings.claudePermissionPlan')}</option>
+                <option value="bypassPermissions">{t('settings.claudePermissionBypass')}</option>
+              </select>
+            </div>
           </div>
         </div>
 

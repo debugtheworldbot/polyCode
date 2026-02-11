@@ -33,6 +33,7 @@ export interface ChatMessage {
 export interface AppSettings {
   codex_bin: string | null;
   claude_bin: string | null;
+  claude_permission_mode: ClaudePermissionMode;
   theme: string;
   language: string;
   window_transparency: number;
@@ -47,6 +48,11 @@ export interface SessionEvent {
 export interface CLIStatus {
   available: boolean;
   path: string | null;
+}
+
+export interface SlashCommand {
+  command: string;
+  description: string;
 }
 
 export interface GitFileStatus {
@@ -75,3 +81,4 @@ export interface GitFileDiffResponse {
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type Language = 'en' | 'zh' | 'system';
+export type ClaudePermissionMode = 'acceptEdits' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';

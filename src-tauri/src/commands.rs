@@ -1,6 +1,6 @@
 use base64::Engine;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::Arc;
@@ -415,6 +415,7 @@ pub async fn send_message(
                 &display_content,
                 &project.path,
                 &settings.claude_bin,
+                &settings.claude_permission_mode,
                 session.model.as_deref(),
                 session.provider_session_id.as_deref(),
                 &state,
@@ -448,6 +449,19 @@ async fn send_codex_message_impl(
     state: &State<'_, AppState>,
     app: &AppHandle,
 ) -> Result<(), String> {
+    if local_image_paths.is_empty() && is_codex_status_command(text_content) {
+        return handle_codex_status_command(
+            session_id,
+            project_path,
+            codex_bin,
+            model,
+            provider_session_id,
+            state,
+            app,
+        )
+        .await;
+    }
+
     let mut active = state.active_sessions.lock().await;
     let mut started_thread_id: Option<String> = None;
 
@@ -552,6 +566,230 @@ async fn send_codex_message_impl(
     Ok(())
 }
 
+const CODEX_STATUS_COMMAND: &str = "/status";
+
+fn is_codex_status_command(input: &str) -> bool {
+    input.trim().eq_ignore_ascii_case(CODEX_STATUS_COMMAND)
+}
+
+fn trim_to_option(value: Option<&str>) -> Option<String> {
+    value.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn first_non_empty_string(value: &Value, keys: &[&str]) -> Option<String> {
+    let obj = value.as_object()?;
+    for key in keys {
+        if let Some(text) = obj.get(*key).and_then(Value::as_str) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_codex_version_from_user_agent(user_agent: &str) -> Option<String> {
+    let (_, remainder) = user_agent.split_once('/')?;
+    let version = remainder.split_whitespace().next()?.trim();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
+async fn active_codex_thread_id_for_session(
+    session_id: &str,
+    state: &State<'_, AppState>,
+) -> Option<String> {
+    let session_arc = {
+        let active = state.active_sessions.lock().await;
+        active.get(session_id).cloned()
+    }?;
+
+    let session = session_arc.lock().await;
+    trim_to_option(session.codex_thread_id.as_deref())
+}
+
+async fn append_and_emit_assistant_message(
+    session_id: &str,
+    content: String,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    let assistant_msg = ChatMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        role: MessageRole::Assistant,
+        content: trimmed.to_string(),
+        message_type: MessageType::Text,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    };
+
+    let mut messages = storage::load_messages(session_id).await;
+    messages.push(assistant_msg.clone());
+    storage::save_messages(session_id, &messages).await?;
+
+    let payload = serde_json::to_value(&assistant_msg)
+        .map_err(|e| format!("Failed to serialize assistant message: {}", e))?;
+
+    let _ = app.emit(
+        "session-event",
+        SessionEvent {
+            session_id: session_id.to_string(),
+            event_type: "assistant_message".to_string(),
+            data: payload,
+        },
+    );
+
+    Ok(())
+}
+
+async fn handle_codex_status_command(
+    session_id: &str,
+    project_path: &str,
+    codex_bin: &Option<String>,
+    model: Option<&str>,
+    provider_session_id: Option<&str>,
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let project_path_owned = project_path.to_string();
+    let codex_bin_owned = codex_bin.clone();
+    let active_thread_id = active_codex_thread_id_for_session(session_id, state).await;
+
+    let (config_result, account_result, user_agent_result, rate_limits_result) = tokio::join!(
+        codex_adapter::run_codex_method(
+            project_path_owned.clone(),
+            codex_bin_owned.clone(),
+            "config/read",
+            json!({}),
+        ),
+        codex_adapter::run_codex_method(
+            project_path_owned.clone(),
+            codex_bin_owned.clone(),
+            "account/read",
+            json!({}),
+        ),
+        codex_adapter::run_codex_method(
+            project_path_owned.clone(),
+            codex_bin_owned.clone(),
+            "getUserAgent",
+            json!({}),
+        ),
+        codex_adapter::run_codex_method(
+            project_path_owned,
+            codex_bin_owned,
+            "account/rateLimits/read",
+            json!({}),
+        ),
+    );
+
+    let config_value = config_result.ok();
+    let config = config_value.as_ref().and_then(|v| v.get("config"));
+    let account_value = account_result.ok();
+    let account = account_value.as_ref().and_then(|v| v.get("account"));
+
+    let model_name = trim_to_option(model)
+        .or_else(|| config.and_then(|c| first_non_empty_string(c, &["model"])))
+        .unwrap_or_else(|| "unknown".to_string());
+    let reasoning = config
+        .and_then(|c| first_non_empty_string(c, &["model_reasoning_effort", "modelReasoningEffort"]))
+        .unwrap_or_else(|| "auto".to_string());
+    let approval = config
+        .and_then(|c| first_non_empty_string(c, &["approval_policy", "approvalPolicy"]))
+        .unwrap_or_else(|| "default".to_string());
+    let sandbox = config
+        .and_then(|c| first_non_empty_string(c, &["sandbox_mode", "sandboxMode"]))
+        .unwrap_or_else(|| "default".to_string());
+    let personality = config
+        .and_then(|c| first_non_empty_string(c, &["personality"]))
+        .unwrap_or_else(|| "pragmatic".to_string());
+
+    let account_email = account.and_then(|a| first_non_empty_string(a, &["email"]));
+    let account_plan = account.and_then(|a| first_non_empty_string(a, &["planType", "plan_type"]));
+    let account_type = account.and_then(|a| first_non_empty_string(a, &["type"]));
+    let account_display = match (account_email, account_plan, account_type) {
+        (Some(email), Some(plan), _) => format!("{} ({})", email, plan),
+        (Some(email), None, Some(kind)) => format!("{} ({})", email, kind),
+        (Some(email), None, None) => email,
+        (None, Some(plan), _) => plan,
+        (None, None, Some(kind)) => kind,
+        (None, None, None) => "unavailable".to_string(),
+    };
+
+    let user_agent = user_agent_result
+        .ok()
+        .and_then(|v| first_non_empty_string(&v, &["userAgent", "user_agent"]));
+    let cli_version = user_agent
+        .as_deref()
+        .and_then(extract_codex_version_from_user_agent)
+        .map(|v| format!("v{}", v))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let thread_id = active_thread_id
+        .or_else(|| trim_to_option(provider_session_id))
+        .unwrap_or_else(|| "not started".to_string());
+
+    let agents_path = Path::new(project_path).join("AGENTS.md");
+    let agents_md = if agents_path.exists() {
+        "AGENTS.md"
+    } else {
+        "(none)"
+    };
+
+    let usage_line = if rate_limits_result.is_ok() {
+        "Usage limits: available".to_string()
+    } else {
+        "Usage limits: unavailable".to_string()
+    };
+
+    let mut lines = Vec::new();
+    lines.push(format!("OpenAI Codex ({})", cli_version));
+    lines.push(format!("Model: {} (reasoning {})", model_name, reasoning));
+    lines.push(format!("Directory: {}", project_path));
+    lines.push(format!("Approval: {}", approval));
+    lines.push(format!("Sandbox: {}", sandbox));
+    lines.push(format!("AGENTS.md: {}", agents_md));
+    lines.push(format!("Account: {}", account_display));
+    lines.push(format!("Session: {}", thread_id));
+    lines.push(format!("Personality: {}", personality));
+    lines.push("Context window: unavailable".to_string());
+    lines.push(usage_line);
+
+    append_and_emit_assistant_message(session_id, lines.join("\n"), app).await?;
+
+    let _ = app.emit(
+        "session-event",
+        SessionEvent {
+            session_id: session_id.to_string(),
+            event_type: "codex_message".to_string(),
+            data: json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed",
+                    }
+                }
+            }),
+        },
+    );
+
+    Ok(())
+}
+
 fn extract_local_images_from_content(content: &str) -> (String, Vec<String>) {
     let mut text_lines: Vec<&str> = Vec::new();
     let mut local_images: Vec<String> = Vec::new();
@@ -611,6 +849,7 @@ async fn send_claude_message_impl(
     content: &str,
     project_path: &str,
     claude_bin: &Option<String>,
+    claude_permission_mode: &str,
     model: Option<&str>,
     provider_session_id: Option<&str>,
     state: &State<'_, AppState>,
@@ -623,6 +862,7 @@ async fn send_claude_message_impl(
         project_path.to_string(),
         content.to_string(),
         claude_bin.clone(),
+        claude_permission_mode.to_string(),
         model.map(|m| m.to_string()),
         provider_session_id.map(|s| s.to_string()),
         app.clone(),
@@ -902,6 +1142,8 @@ pub async fn update_settings(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     settings.window_transparency = settings.window_transparency.min(100);
+    settings.claude_permission_mode =
+        normalize_claude_permission_mode(&settings.claude_permission_mode);
 
     let mut data = state.data.lock().await;
     data.settings = settings.clone();
@@ -915,6 +1157,17 @@ pub async fn update_settings(
     crate::apply_liquid_glass_effect(&app, settings.window_transparency);
 
     Ok(())
+}
+
+fn normalize_claude_permission_mode(mode: &str) -> String {
+    match mode.trim() {
+        "acceptEdits" => "acceptEdits".to_string(),
+        "bypassPermissions" => "bypassPermissions".to_string(),
+        "default" => "default".to_string(),
+        "dontAsk" => "dontAsk".to_string(),
+        "plan" => "plan".to_string(),
+        _ => "acceptEdits".to_string(),
+    }
 }
 
 // ─── Utility Commands ───
@@ -1290,6 +1543,142 @@ pub async fn git_discard_file(
     }
 
     Ok(())
+}
+
+const DEFAULT_CODEX_SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/apps", "Browse or manage connected ChatGPT apps."),
+    ("/collab", "Open collaboration mode controls."),
+    ("/compact", "Compact the current conversation to save context."),
+    ("/environments", "Inspect available execution environments."),
+    ("/experimental", "Toggle experimental Codex features."),
+    ("/feedback", "Send logs and feedback to Codex maintainers."),
+    ("/fork", "Fork the current thread into a new one."),
+    ("/init", "Create an AGENTS.md for project-specific guidance."),
+    ("/mcp", "List configured MCP tools and servers."),
+    ("/model", "Switch model or reasoning effort."),
+    ("/new", "Start a fresh thread."),
+    ("/permissions", "Adjust approval and permission behavior."),
+    ("/personality", "Choose Codex communication style."),
+    ("/plan", "Switch to plan mode."),
+    ("/ps", "View active turns and related process state."),
+    ("/rename", "Rename the current thread."),
+    ("/review", "Run a code review on current changes."),
+    ("/skills", "List and inspect available skills."),
+    ("/status", "Show model, approvals, and usage status."),
+    ("/usage", "Show usage and rate-limit details."),
+];
+
+fn resolve_codex_bin_for_slash_commands(custom: &Option<String>) -> String {
+    match custom {
+        Some(bin) if !bin.trim().is_empty() => bin.trim().to_string(),
+        _ => "codex".to_string(),
+    }
+}
+
+fn is_slash_command_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
+}
+
+fn extract_slash_tokens(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut result = Vec::new();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] != '/' {
+            i += 1;
+            continue;
+        }
+
+        let prev_is_command_char = i > 0 && is_slash_command_char(chars[i - 1]);
+        if prev_is_command_char {
+            i += 1;
+            continue;
+        }
+
+        let mut j = i + 1;
+        while j < chars.len() && is_slash_command_char(chars[j]) {
+            j += 1;
+        }
+
+        if j > i + 1 {
+            let token: String = chars[i..j].iter().collect();
+            if token.len() <= 32 {
+                result.push(token.to_ascii_lowercase());
+            }
+        }
+
+        i = j;
+    }
+
+    result
+}
+
+fn parse_codex_slash_commands_from_strings(output: &str) -> HashSet<String> {
+    let mut commands = HashSet::new();
+
+    for line in output.lines() {
+        let lower = line.to_ascii_lowercase();
+        if !(lower.contains("use /")
+            || lower.contains("run /")
+            || lower.contains("type /")
+            || lower.contains("try /")
+            || lower.contains("to use /")
+            || lower.contains("command popup"))
+        {
+            continue;
+        }
+
+        for token in extract_slash_tokens(line) {
+            commands.insert(token);
+        }
+    }
+
+    commands
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn discover_codex_slash_commands(codex_bin: &str) -> HashSet<String> {
+    let output = match tokio::process::Command::new("strings")
+        .arg(codex_bin)
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return HashSet::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_codex_slash_commands_from_strings(&stdout)
+}
+
+#[cfg(target_os = "windows")]
+async fn discover_codex_slash_commands(_codex_bin: &str) -> HashSet<String> {
+    HashSet::new()
+}
+
+#[tauri::command]
+pub async fn list_codex_slash_commands(
+    state: State<'_, AppState>,
+) -> Result<Vec<SlashCommand>, String> {
+    let codex_bin = {
+        let data = state.data.lock().await;
+        resolve_codex_bin_for_slash_commands(&data.settings.codex_bin)
+    };
+
+    let mut merged: BTreeMap<String, String> = BTreeMap::new();
+    for (command, description) in DEFAULT_CODEX_SLASH_COMMANDS {
+        merged.insert((*command).to_string(), (*description).to_string());
+    }
+
+    for discovered in discover_codex_slash_commands(&codex_bin).await {
+        merged.entry(discovered).or_default();
+    }
+
+    Ok(merged
+        .into_iter()
+        .map(|(command, description)| SlashCommand { command, description })
+        .collect())
 }
 
 #[tauri::command]
