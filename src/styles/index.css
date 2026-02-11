@@ -2,9 +2,14 @@
 
 /* ─── macOS Liquid Glass Design Variables ─── */
 :root {
-  --color-bg: rgba(255, 255, 255, 0.72);
+  --glass-alpha-bg-light: 0.56;
+  --glass-alpha-sidebar-light: 0.40;
+  --glass-alpha-bg-dark: 0.52;
+  --glass-alpha-sidebar-dark: 0.39;
+
+  --color-bg: rgba(255, 255, 255, var(--glass-alpha-bg-light));
   --color-bg-solid: #ffffff;
-  --color-sidebar-bg: rgba(245, 245, 245, 0.55);
+  --color-sidebar-bg: rgba(245, 245, 245, var(--glass-alpha-sidebar-light));
   --color-sidebar-hover: rgba(0, 0, 0, 0.05);
   --color-sidebar-active: rgba(0, 0, 0, 0.08);
   --color-text: #1d1d1f;
@@ -12,6 +17,9 @@
   --color-text-muted: #a1a1a6;
   --color-border: rgba(0, 0, 0, 0.1);
   --color-divider: rgba(0, 0, 0, 0.06);
+  --color-bg-tertiary: rgba(255, 255, 255, 0.6);
+  --color-success: #16a34a;
+  --color-error: #dc2626;
 
   --color-user-bubble: rgba(0, 0, 0, 0.06);
   --color-user-text: #1d1d1f;
@@ -32,9 +40,9 @@
 }
 
 .dark {
-  --color-bg: rgba(30, 30, 30, 0.68);
+  --color-bg: rgba(30, 30, 30, var(--glass-alpha-bg-dark));
   --color-bg-solid: #1e1e1e;
-  --color-sidebar-bg: rgba(37, 37, 38, 0.5);
+  --color-sidebar-bg: rgba(37, 37, 38, var(--glass-alpha-sidebar-dark));
   --color-sidebar-hover: rgba(255, 255, 255, 0.06);
   --color-sidebar-active: rgba(255, 255, 255, 0.1);
   --color-text: #d4d4d4;
@@ -42,6 +50,9 @@
   --color-text-muted: #6e6e6e;
   --color-border: rgba(255, 255, 255, 0.1);
   --color-divider: rgba(255, 255, 255, 0.05);
+  --color-bg-tertiary: rgba(255, 255, 255, 0.08);
+  --color-success: #86efac;
+  --color-error: #fca5a5;
 
   --color-user-bubble: rgba(255, 255, 255, 0.08);
   --color-user-text: #ffffff;
@@ -1210,24 +1221,8 @@ body {
   }
 }
 
-/* ─── Scrollbar ─── */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 4px;
-}
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
-}
+/* ─── Scrollbar: no customization, use macOS native overlay (auto-hide) ─── */
+
 
 /* ─── Markdown Body ─── */
 .markdown-body {
@@ -1414,6 +1409,220 @@ pre {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 24px;
+}
+
+/* ─── Settings Panel ─── */
+.settings-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  padding: 16px;
+}
+
+.settings-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 12, 18, 0.22);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+
+.settings-content {
+  position: relative;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(88vh, 760px);
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg-solid) 94%, rgba(255, 255, 255, 0.06));
+  border: 1px solid color-mix(in srgb, var(--color-border) 92%, transparent);
+  border-radius: 18px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.settings-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.settings-subtitle {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.settings-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 28px;
+}
+
+.settings-section h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.settings-row > label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.settings-row-stack {
+  display: block;
+  padding: 14px 0;
+}
+
+.settings-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.settings-range-value {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.settings-range-hints {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.settings-select {
+  min-width: 140px;
+  max-width: 60%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-solid) 84%, transparent);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.settings-select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.1);
+}
+
+.settings-footer {
+  padding-top: 18px;
+  margin-top: 14px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.settings-content .form-input,
+.settings-content .settings-select {
+  background: color-mix(in srgb, var(--color-bg-solid) 92%, transparent);
+  border-color: color-mix(in srgb, var(--color-border) 90%, transparent);
+}
+
+.settings-content .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.settings-content .btn:not(.btn-primary) {
+  background: color-mix(in srgb, var(--color-bg-solid) 92%, transparent);
+}
+
+.settings-content .btn-ghost:hover {
+  background: color-mix(in srgb, var(--color-sidebar-hover) 86%, transparent);
+}
+
+.settings-content .btn-primary {
+  background: var(--color-text);
+  color: #fff;
+  border: none;
+}
+
+.dark .settings-content .btn-primary {
+  background: #fff;
+  color: #000;
+}
+
+@media (max-width: 720px) {
+  .settings-panel {
+    padding: 10px;
+  }
+
+  .settings-content {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    border-radius: 14px;
+    padding: 18px;
+  }
+}
+
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-solid) 75%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  color: var(--color-text);
+  background: var(--color-sidebar-hover);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.status-dot.available {
+  background: var(--color-success);
+}
+
+.status-dot.unavailable {
+  background: var(--color-error);
 }
 
 /* ─── Form ─── */
