@@ -204,6 +204,40 @@ body {
   cursor: default;
 }
 
+.session-loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 185, 129, 0.26);
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.session-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1.6px solid currentColor;
+  border-right-color: transparent;
+}
+
+.session-loading-text {
+  white-space: nowrap;
+}
+
+.dark .session-loading-indicator {
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.36);
+  background: rgba(16, 185, 129, 0.22);
+}
+
 .project-add-btn {
   margin-left: auto;
   width: 20px;

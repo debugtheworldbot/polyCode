@@ -424,7 +424,15 @@ pub async fn send_message(
             .await?;
         }
         AIProvider::Gemini => {
-            return Err("Gemini provider is not supported yet".to_string());
+            send_gemini_message_impl(
+                &session_id,
+                &display_content,
+                &project.path,
+                session.model.as_deref(),
+                &state,
+                &app,
+            )
+            .await?;
         }
     }
 
@@ -1311,6 +1319,36 @@ async fn send_claude_message_impl(
         claude_permission_mode.to_string(),
         model.map(|m| m.to_string()),
         provider_session_id.map(|s| s.to_string()),
+        app.clone(),
+    )
+    .await?;
+
+    let mut active = state.active_sessions.lock().await;
+    active.insert(
+        session_id.to_string(),
+        Arc::new(Mutex::new(ActiveSession {
+            child: Some(child),
+            codex_thread_id: None,
+        })),
+    );
+
+    Ok(())
+}
+
+async fn send_gemini_message_impl(
+    session_id: &str,
+    content: &str,
+    project_path: &str,
+    model: Option<&str>,
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let child = gemini_adapter::spawn_gemini_session(
+        session_id.to_string(),
+        project_path.to_string(),
+        content.to_string(),
+        None,
+        model.map(|m| m.to_string()),
         app.clone(),
     )
     .await?;

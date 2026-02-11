@@ -55,6 +55,21 @@ function compactText(value: string, max = 120): string {
   return `${normalized.slice(0, max - 1)}…`;
 }
 
+function formatErrorMessage(error: unknown): string {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (isRecord(error)) {
+    const direct = firstNonEmptyString([
+      error.message,
+      error.error,
+      error.details,
+      error.reason,
+    ]);
+    if (direct) return direct;
+  }
+  return 'Failed to send message';
+}
+
 function normalizeMultiline(value: string): string {
   return value.replace(/\r\n/g, '\n').trim();
 }
@@ -524,6 +539,24 @@ function parseClaudeLiveStatus(data: JsonRecord): string | null | undefined {
 
   if (evtType === 'message_stop') return 'Finalizing response';
   if (evtType === 'ping') return undefined;
+
+  return 'Thinking';
+}
+
+function parseGeminiLiveStatus(data: JsonRecord): string | null | undefined {
+  const phase = asString(data.phase) || asString(data.status);
+  if (phase === 'completed' || phase === 'done' || phase === 'result') return null;
+  if (phase === 'error' || phase === 'failed') return 'Error';
+
+  const explicit = firstNonEmptyString([
+    data.liveStatus,
+    data.live_status,
+    data.message,
+  ]);
+  if (explicit) return compactText(explicit);
+
+  const delta = asString(data.delta);
+  if (typeof delta === 'string' && delta.trim()) return 'Writing response';
 
   return 'Thinking';
 }
@@ -1264,14 +1297,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (e) {
       console.error('Failed to send message:', e);
       set({ isSending: false });
+      const errorMsg = formatErrorMessage(e);
       set((state) => {
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
+        const existing = state.messages[sessionId] || [];
+        const updated = mergeMessage(existing, sessionId, {
+          role: 'system',
+          messageType: 'error',
+          content: errorMsg,
+          mode: 'new',
+        });
         delete nextStatus[sessionId];
         delete nextStart[sessionId];
         return {
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
+          messages: updated === existing ? state.messages : { ...state.messages, [sessionId]: updated },
         };
       });
     }
@@ -1549,6 +1591,70 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
+    if (event_type === 'gemini_stream') {
+      const status = parseGeminiLiveStatus(data);
+      if (typeof status === 'string' && status.trim()) {
+        set((state) => ({
+          liveStatusBySession: { ...state.liveStatusBySession, [session_id]: status },
+        }));
+      } else if (status === null) {
+        set((state) => {
+          const nextStatus = { ...state.liveStatusBySession };
+          delete nextStatus[session_id];
+          return { liveStatusBySession: nextStatus };
+        });
+      }
+
+      const delta = asString(data.delta);
+      if (!delta) return;
+
+      set((state) => {
+        const existing = state.messages[session_id] || [];
+        const updated = mergeMessage(existing, session_id, {
+          role: 'assistant',
+          messageType: 'text',
+          content: delta,
+          mode: 'append',
+        });
+        if (updated === existing) return state;
+        return { messages: { ...state.messages, [session_id]: updated } };
+      });
+      return;
+    }
+
+    if (event_type === 'gemini_result') {
+      set({ isSending: false });
+      set((state) => {
+        const nextStatus = { ...state.liveStatusBySession };
+        const nextStart = { ...state.activeTurnStartedAt };
+        delete nextStatus[session_id];
+        delete nextStart[session_id];
+        return {
+          liveStatusBySession: nextStatus,
+          activeTurnStartedAt: nextStart,
+        };
+      });
+      void get().flushQueuedMessages(session_id);
+
+      const result = asString(data.result) || '';
+      if (result) {
+        set((state) => {
+          const existing = state.messages[session_id] || [];
+          const updated = mergeMessage(existing, session_id, {
+            role: 'assistant',
+            messageType: 'text',
+            content: result,
+            mode: 'replace_or_create',
+          });
+          if (updated === existing) return state;
+          return {
+            messages: { ...state.messages, [session_id]: updated },
+          };
+        });
+      }
+      return;
+    }
+
     // Handle Claude result (final message)
     if (event_type === 'claude_result') {
       set({ isSending: false });
@@ -1601,7 +1707,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     // Handle errors
-    if (event_type === 'codex_error' || event_type === 'claude_error') {
+    if (event_type === 'codex_error' || event_type === 'claude_error' || event_type === 'gemini_error') {
       set({ isSending: false });
       set((state) => {
         const nextStatus = { ...state.liveStatusBySession };
