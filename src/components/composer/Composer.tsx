@@ -90,6 +90,8 @@ export function Composer() {
     sessions,
     queuedMessages,
     contextUsageBySession,
+    liveStatusBySession,
+    activeTurnStartedAt,
     isSending,
     sendMessage,
     stopSession,
@@ -346,6 +348,9 @@ export function Composer() {
       : t('session.running')
     : t('session.idle');
   const statusClassName = isSending ? 'running' : 'idle';
+  const isCurrentSessionRunning = Boolean(
+    liveStatusBySession[activeSessionId] || activeTurnStartedAt[activeSessionId]
+  );
 
   return (
     <div className="composer-container" ref={composerContainerRef}>
@@ -493,7 +498,7 @@ export function Composer() {
                 </div>
               </div>
             )}
-            {isSending && (
+            {isCurrentSessionRunning && (
               <button
                 className="icon-btn"
                 onClick={handleStop}

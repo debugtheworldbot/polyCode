@@ -444,6 +444,199 @@ function claudeToolLiveStatus(name: string): string {
   }
 }
 
+function parseClaudeLiveStatus(data: JsonRecord): string | null | undefined {
+  const type = asString(data.type);
+  if (!type) return undefined;
+
+  if (type === 'result') return null;
+
+  if (type === 'system') {
+    const subtype = asString(data.subtype);
+    if (subtype === 'init') {
+      const model = asString(data.model);
+      return model ? `Initialized (${model})` : 'Initialized';
+    }
+    return subtype ? compactText(subtype.replace(/[_-]/g, ' ')) : 'Initializing';
+  }
+
+  if (type === 'assistant') {
+    const message = isRecord(data.message) ? data.message : null;
+    const stopReason = firstNonEmptyString([
+      message ? message.stop_reason : null,
+      message ? message.stopReason : null,
+    ]);
+    if (stopReason === 'tool_use') return 'Using tool';
+    if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return 'Finalizing response';
+    return 'Writing response';
+  }
+
+  if (type !== 'stream_event') return undefined;
+
+  const evt = isRecord(data.event) ? data.event : null;
+  if (!evt) return 'Thinking';
+
+  const evtType = asString(evt.type);
+  if (!evtType) return 'Thinking';
+
+  if (evtType === 'message_start') {
+    const message = isRecord(evt.message) ? evt.message : null;
+    const model = firstNonEmptyString([message ? message.model : null, data.model]);
+    return model ? `Thinking (${model})` : 'Thinking';
+  }
+
+  if (evtType === 'content_block_start') {
+    const block = isRecord(evt.content_block) ? evt.content_block : null;
+    if (!block) return 'Thinking';
+
+    const blockType = asString(block.type);
+    if (blockType === 'tool_use') {
+      const toolName = asString(block.name) || 'tool';
+      return claudeToolLiveStatus(toolName);
+    }
+    if (blockType === 'text') return 'Writing response';
+    if (blockType === 'thinking') return 'Thinking';
+    return 'Thinking';
+  }
+
+  if (evtType === 'content_block_delta') {
+    const delta = isRecord(evt.delta) ? evt.delta : null;
+    if (!delta) return 'Thinking';
+
+    const deltaType = asString(delta.type);
+    if (deltaType === 'text_delta') return 'Writing response';
+    if (deltaType === 'thinking_delta') return 'Thinking';
+    if (deltaType === 'input_json_delta') return 'Preparing tool input';
+    return 'Thinking';
+  }
+
+  if (evtType === 'message_delta') {
+    const delta = isRecord(evt.delta) ? evt.delta : null;
+    const stopReason = firstNonEmptyString([
+      delta ? delta.stop_reason : null,
+      delta ? delta.stopReason : null,
+      evt.stop_reason,
+      evt.stopReason,
+    ]);
+    if (stopReason === 'tool_use') return 'Using tool';
+    if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return 'Finalizing response';
+    return 'Thinking';
+  }
+
+  if (evtType === 'message_stop') return 'Finalizing response';
+  if (evtType === 'ping') return undefined;
+
+  return 'Thinking';
+}
+
+function parseClaudeMessage(data: JsonRecord): ParsedEventMessage[] {
+  const type = asString(data.type);
+  if (!type) return [];
+
+  if (type === 'system') {
+    const subtype = asString(data.subtype);
+    if (subtype === 'init') {
+      const model = asString(data.model) || 'default model';
+      const permissionMode = asString(data.permissionMode) || asString(data.permission_mode) || 'default';
+      const toolCount = Array.isArray(data.tools) ? data.tools.length : 0;
+      return [{
+        role: 'system',
+        messageType: 'tool',
+        content: `Claude initialized (${model}, ${permissionMode}, ${toolCount} tools)`,
+        mode: 'new',
+      }];
+    }
+    return [];
+  }
+
+  if (type !== 'assistant') {
+    const raw = asString(data.raw);
+    if (raw && raw.trim()) {
+      return [{
+        role: 'system',
+        messageType: 'tool',
+        content: compactText(raw, 200),
+        mode: 'new',
+      }];
+    }
+    return [];
+  }
+
+  const parsed: ParsedEventMessage[] = [];
+  const message = isRecord(data.message) ? data.message : null;
+
+  if (message) {
+    const content = message.content;
+    const textParts: string[] = [];
+    const reasoningParts: string[] = [];
+    const toolMessages: string[] = [];
+
+    if (typeof content === 'string') {
+      textParts.push(content);
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!isRecord(block)) continue;
+        const blockType = asString(block.type);
+        if (blockType === 'text') {
+          const text = asString(block.text);
+          if (text) textParts.push(text);
+          continue;
+        }
+
+        if (blockType === 'thinking') {
+          const thinking = firstNonEmptyString([block.thinking, block.text]);
+          if (thinking) reasoningParts.push(thinking);
+          continue;
+        }
+
+        if (blockType === 'tool_use') {
+          const name = asString(block.name) || 'Tool';
+          const input = isRecord(block.input) ? block.input : {};
+          toolMessages.push(formatClaudeToolMessage(name, input));
+        }
+      }
+    }
+
+    if (reasoningParts.length > 0) {
+      parsed.push({
+        role: 'assistant',
+        messageType: 'reasoning',
+        content: reasoningParts.join('\n\n'),
+        mode: 'replace_or_create',
+      });
+    }
+
+    for (const toolContent of toolMessages) {
+      parsed.push({
+        role: 'assistant',
+        messageType: 'tool',
+        content: toolContent,
+        mode: 'new',
+      });
+    }
+
+    if (textParts.length > 0) {
+      parsed.push({
+        role: 'assistant',
+        messageType: 'text',
+        content: textParts.join('\n'),
+        mode: 'replace_or_create',
+      });
+    }
+  }
+
+  const topLevelError = asString(data.error);
+  if (topLevelError && topLevelError.trim()) {
+    parsed.push({
+      role: 'system',
+      messageType: 'error',
+      content: topLevelError,
+      mode: 'new',
+    });
+  }
+
+  return parsed;
+}
+
 function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
   const rpcError = isRecord(data.error) ? data.error : null;
   if (rpcError) {
@@ -1211,81 +1404,108 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    if (event_type === 'claude_stream') {
-      const evt = isRecord(data.event) ? data.event : null;
-      if (!evt) {
+    if (event_type === 'claude_stream' || event_type === 'claude_message') {
+      const status = parseClaudeLiveStatus(data);
+      if (typeof status === 'string' && status.trim()) {
         set((state) => ({
-          liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
+          liveStatusBySession: { ...state.liveStatusBySession, [session_id]: status },
         }));
-        return;
+      } else if (status === null) {
+        set((state) => {
+          const nextStatus = { ...state.liveStatusBySession };
+          delete nextStatus[session_id];
+          return { liveStatusBySession: nextStatus };
+        });
       }
 
-      const evtType = asString(evt.type);
+      if (event_type === 'claude_stream') {
+        const evt = isRecord(data.event) ? data.event : null;
+        if (!evt) return;
 
-      if (evtType === 'content_block_start') {
-        const contentBlock = isRecord(evt.content_block) ? evt.content_block : null;
-        if (contentBlock && contentBlock.type === 'tool_use') {
-          const toolName = asString(contentBlock.name) || 'Tool';
-          const index = asNumber(evt.index) ?? 0;
-          set((state) => ({
-            claudeToolBlocks: {
-              ...state.claudeToolBlocks,
-              [session_id]: { name: toolName, inputJson: '', index },
-            },
-            liveStatusBySession: {
-              ...state.liveStatusBySession,
-              [session_id]: claudeToolLiveStatus(toolName),
-            },
-          }));
-        }
-        return;
-      }
+        const evtType = asString(evt.type);
+        if (!evtType) return;
 
-      if (evtType === 'content_block_delta') {
-        const delta = isRecord(evt.delta) ? evt.delta : null;
-        if (!delta) return;
-
-        if (delta.type === 'input_json_delta') {
-          const partialJson = asString(delta.partial_json) || '';
-          if (partialJson) {
-            set((state) => {
-              const block = state.claudeToolBlocks[session_id];
-              if (!block) return state;
-              return {
-                claudeToolBlocks: {
-                  ...state.claudeToolBlocks,
-                  [session_id]: { ...block, inputJson: block.inputJson + partialJson },
-                },
-              };
-            });
+        if (evtType === 'content_block_start') {
+          const contentBlock = isRecord(evt.content_block) ? evt.content_block : null;
+          if (contentBlock && contentBlock.type === 'tool_use') {
+            const toolName = asString(contentBlock.name) || 'Tool';
+            const index = asNumber(evt.index) ?? 0;
+            set((state) => ({
+              claudeToolBlocks: {
+                ...state.claudeToolBlocks,
+                [session_id]: { name: toolName, inputJson: '', index },
+              },
+            }));
           }
           return;
         }
 
-        if (delta.type === 'text_delta') {
-          const text = asString(delta.text);
-          if (!text) return;
-          set((state) => {
-            const existing = state.messages[session_id] || [];
-            const updated = mergeMessage(existing, session_id, {
-              role: 'assistant',
-              messageType: 'text',
-              content: text,
-              mode: 'append',
-            });
-            if (updated === existing) return state;
-            return {
-              messages: { ...state.messages, [session_id]: updated },
-              liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
-            };
-          });
-        }
-        return;
-      }
+        if (evtType === 'content_block_delta') {
+          const delta = isRecord(evt.delta) ? evt.delta : null;
+          if (!delta) return;
 
-      if (evtType === 'content_block_stop') {
-        const block = get().claudeToolBlocks[session_id];
-        if (block) {
+          if (delta.type === 'input_json_delta') {
+            const partialJson = asString(delta.partial_json) || '';
+            if (partialJson) {
+              set((state) => {
+                const block = state.claudeToolBlocks[session_id];
+                if (!block) return state;
+                return {
+                  claudeToolBlocks: {
+                    ...state.claudeToolBlocks,
+                    [session_id]: { ...block, inputJson: block.inputJson + partialJson },
+                  },
+                };
+              });
+            }
+            return;
+          }
+
+          if (delta.type === 'text_delta') {
+            const text = asString(delta.text);
+            if (!text) return;
+            set((state) => {
+              const existing = state.messages[session_id] || [];
+              const updated = mergeMessage(existing, session_id, {
+                role: 'assistant',
+                messageType: 'text',
+                content: text,
+                mode: 'append',
+              });
+              if (updated === existing) return state;
+              return {
+                messages: { ...state.messages, [session_id]: updated },
+              };
+            });
+            return;
+          }
+
+          if (delta.type === 'thinking_delta') {
+            const thinking = firstNonEmptyString([delta.thinking, delta.text]);
+            if (!thinking) return;
+            set((state) => {
+              const existing = state.messages[session_id] || [];
+              const updated = mergeMessage(existing, session_id, {
+                role: 'assistant',
+                messageType: 'reasoning',
+                content: thinking,
+                mode: 'append',
+              });
+              if (updated === existing) return state;
+              return {
+                messages: { ...state.messages, [session_id]: updated },
+              };
+            });
+            return;
+          }
+
+          return;
+        }
+
+        if (evtType === 'content_block_stop') {
+          const block = get().claudeToolBlocks[session_id];
+          if (!block) return;
+
           let input: JsonRecord = {};
           try { input = JSON.parse(block.inputJson || '{}') as JsonRecord; } catch { /* ignore */ }
 
@@ -1306,17 +1526,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
             return {
               claudeToolBlocks: nextBlocks,
               messages: updated === existing ? state.messages : { ...state.messages, [session_id]: updated },
-              liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
             };
           });
+          return;
         }
+
         return;
       }
 
-      // Other event types (message_start, message_stop, etc.)
-      set((state) => ({
-        liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
-      }));
+      const parsedClaudeMessages = parseClaudeMessage(data);
+      if (parsedClaudeMessages.length === 0) return;
+
+      set((state) => {
+        const existing = state.messages[session_id] || [];
+        let next = existing;
+        for (const parsed of parsedClaudeMessages) {
+          next = mergeMessage(next, session_id, parsed);
+        }
+        if (next === existing) return state;
+        return { messages: { ...state.messages, [session_id]: next } };
+      });
       return;
     }
 
