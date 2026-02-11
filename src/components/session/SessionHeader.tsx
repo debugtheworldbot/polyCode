@@ -22,7 +22,6 @@ export function SessionHeader() {
     activeProjectId,
     projects,
     sidebarCollapsed,
-    showGitPanel,
     toggleSidebar,
     toggleGitPanel,
   } = useAppStore();
@@ -54,7 +53,6 @@ export function SessionHeader() {
           <button
             type="button"
             className="header-btn"
-            style={showGitPanel ? { background: 'var(--color-sidebar-active)' } : undefined}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={handleGitButtonClick}
           >
@@ -89,7 +87,6 @@ export function SessionHeader() {
         <button
           type="button"
           className="header-btn"
-          style={showGitPanel ? { background: 'var(--color-sidebar-active)' } : undefined}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={handleGitButtonClick}
         >

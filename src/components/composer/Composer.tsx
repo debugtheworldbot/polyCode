@@ -456,7 +456,7 @@ export function Composer() {
               <div className="context-meter" style={{ ['--context-progress' as string]: `${contextPercentClamped}%` }}>
                 <div className="context-ring" aria-label="Context usage">
                   <span className="context-ring-text">
-                    {contextPercent === null ? '·' : `${Math.round(contextPercentClamped)}%`}
+                    {contextPercent === null ? '' : `${Math.round(contextPercentClamped)}%`}
                   </span>
                 </div>
                 <div className="context-tooltip" role="status">

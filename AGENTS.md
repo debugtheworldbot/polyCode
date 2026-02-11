@@ -31,6 +31,10 @@ TypeScript is strict-mode (`tsconfig.app.json`) and linted with ESLint (`eslint.
 
 Follow the existing style in touched files; do not mix large formatting-only changes with feature work.
 
+UI rule for icon buttons:
+- For icon-only controls (including `header-btn`, `icon-btn`, `git-icon-btn`, `git-mini-btn`, `btn-icon`), keep default background transparent.
+- Only show background on hover, and use the unified hover color `var(--color-sidebar-hover)`.
+
 ## Testing Guidelines
 There is no dedicated JS test runner configured yet. Before opening a PR, run:
 1. `npm run lint`

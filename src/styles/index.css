@@ -405,11 +405,6 @@ body {
   cursor: pointer;
 }
 
-.git-icon-btn:hover {
-  background: var(--color-sidebar-hover);
-  color: var(--color-text);
-}
-
 .git-icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -627,11 +622,6 @@ body {
   cursor: pointer;
 }
 
-.git-mini-btn:hover {
-  background: var(--color-sidebar-hover);
-  color: var(--color-text);
-}
-
 .git-mini-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -795,16 +785,12 @@ body {
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: transparent;
   color: var(--color-text);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s;
-}
-
-.header-btn:hover {
-  background: var(--color-sidebar-hover);
+  transition: background 0.1s, color 0.1s;
 }
 
 /* ─── Messages ─── */
@@ -1237,8 +1223,8 @@ body {
 }
 
 .context-ring {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   position: relative;
   background:
@@ -1251,7 +1237,7 @@ body {
 }
 
 .context-ring-text {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   line-height: 1;
   color: var(--color-text-secondary);
@@ -1325,7 +1311,15 @@ body {
 
 .icon-btn:hover {
   color: var(--color-text);
+}
+
+.header-btn:hover,
+.icon-btn:hover,
+.git-icon-btn:hover,
+.git-mini-btn:hover,
+.btn-icon:hover {
   background: var(--color-sidebar-hover);
+  color: var(--color-text);
 }
 
 .model-btn {
@@ -1882,7 +1876,7 @@ pre {
   border-radius: 9px;
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-bg-solid) 75%, transparent);
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1891,7 +1885,6 @@ pre {
 
 .btn-icon:hover {
   color: var(--color-text);
-  background: var(--color-sidebar-hover);
 }
 
 .status-dot {
