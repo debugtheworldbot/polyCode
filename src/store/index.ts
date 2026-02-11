@@ -372,17 +372,67 @@ function mergeMessage(
   return [...existing, createMessage(sessionId, parsed)];
 }
 
-function parseClaudeDelta(data: JsonRecord): string | null {
-  const evt = isRecord(data.event) ? data.event : null;
-  if (!evt) return null;
+function formatClaudeToolMessage(name: string, input: JsonRecord): string {
+  const filePath = asString(input.file_path) || asString(input.path);
 
-  const delta = isRecord(evt.delta) ? evt.delta : null;
-  if (!delta) return null;
-
-  if (delta.type === 'text_delta') {
-    return asString(delta.text);
+  switch (name) {
+    case 'Read':
+      return filePath ? `Read ${filePath}` : 'Read file';
+    case 'Edit': {
+      const target = filePath || 'file';
+      const oldStr = asString(input.old_string);
+      const newStr = asString(input.new_string);
+      if (oldStr || newStr) {
+        const lines: string[] = [];
+        if (oldStr) for (const l of oldStr.split('\n')) lines.push(`- ${l}`);
+        if (newStr) for (const l of newStr.split('\n')) lines.push(`+ ${l}`);
+        return `Update ${target}\n${lines.join('\n')}`;
+      }
+      return `Update ${target}`;
+    }
+    case 'Write':
+      return filePath ? `Write ${filePath}` : 'Write file';
+    case 'Bash': {
+      const cmd = asString(input.command);
+      return cmd ? `Ran \`${compactText(cmd, 80)}\`` : 'Ran command';
+    }
+    case 'Grep': {
+      const pattern = asString(input.pattern);
+      return pattern ? `Searched \`${compactText(pattern, 60)}\`` : 'Searched';
+    }
+    case 'Glob': {
+      const pattern = asString(input.pattern);
+      return pattern ? `Searched \`${compactText(pattern, 60)}\`` : 'Searched files';
+    }
+    case 'WebSearch': {
+      const query = asString(input.query);
+      return query ? `Searched \`${compactText(query, 60)}\`` : 'Web search';
+    }
+    case 'WebFetch': {
+      const url = asString(input.url);
+      return url ? `Fetched ${compactText(url, 80)}` : 'Fetched URL';
+    }
+    case 'Task': {
+      const desc = asString(input.description);
+      return desc ? `Task: ${compactText(desc, 80)}` : 'Task';
+    }
+    default:
+      return name;
   }
-  return null;
+}
+
+function claudeToolLiveStatus(name: string): string {
+  switch (name) {
+    case 'Read': return 'Reading file';
+    case 'Edit': return 'Editing file';
+    case 'Write': return 'Writing file';
+    case 'Bash': return 'Running command';
+    case 'Grep': case 'Glob': return 'Searching';
+    case 'WebSearch': return 'Searching web';
+    case 'WebFetch': return 'Fetching URL';
+    case 'Task': return 'Running task';
+    default: return `Using ${name}`;
+  }
 }
 
 function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
@@ -507,6 +557,87 @@ function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
   return null;
 }
 
+function readTokenBreakdown(value: unknown): {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+} | null {
+  const record = isRecord(value) ? value : null;
+  if (!record) return null;
+
+  const totalTokens = asCount(record.totalTokens ?? record.total_tokens);
+  if (totalTokens === null) return null;
+
+  return {
+    totalTokens,
+    inputTokens: asCount(record.inputTokens ?? record.input_tokens) ?? 0,
+    outputTokens: asCount(record.outputTokens ?? record.output_tokens) ?? 0,
+    cachedInputTokens: asCount(record.cachedInputTokens ?? record.cached_input_tokens) ?? 0,
+    reasoningOutputTokens:
+      asCount(record.reasoningOutputTokens ?? record.reasoning_output_tokens) ?? 0,
+  };
+}
+
+function parseCodexContextUsage(data: JsonRecord): SessionContextUsage | null {
+  const method = asString(data.method);
+  if (!method || normalizeItemType(method) !== normalizeItemType('thread/tokenUsage/updated')) {
+    return null;
+  }
+
+  const params = isRecord(data.params) ? data.params : null;
+  if (!params) return null;
+
+  const usage = isRecord(params.tokenUsage)
+    ? params.tokenUsage
+    : isRecord(params.token_usage)
+      ? params.token_usage
+      : null;
+  if (!usage) return null;
+
+  const total = readTokenBreakdown(usage.total ?? usage.total_token_usage);
+  if (!total) return null;
+  const last =
+    readTokenBreakdown(usage.last ?? usage.last_token_usage) ??
+    total;
+
+  const maxTokens = asCount(usage.modelContextWindow ?? usage.model_context_window);
+  const usagePercent = maxTokens && maxTokens > 0
+    ? Math.min(100, (total.totalTokens / maxTokens) * 100)
+    : null;
+
+  return {
+    usedTokens: total.totalTokens,
+    maxTokens,
+    usagePercent,
+    totalInputTokens: total.inputTokens,
+    totalOutputTokens: total.outputTokens,
+    totalCachedInputTokens: total.cachedInputTokens,
+    totalReasoningOutputTokens: total.reasoningOutputTokens,
+    lastTotalTokens: last.totalTokens,
+    updatedAt: Date.now(),
+  };
+}
+
+interface ClaudeToolBlock {
+  name: string;
+  inputJson: string;
+  index: number;
+}
+
+interface SessionContextUsage {
+  usedTokens: number;
+  maxTokens: number | null;
+  usagePercent: number | null;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedInputTokens: number;
+  totalReasoningOutputTokens: number;
+  lastTotalTokens: number;
+  updatedAt: number;
+}
+
 interface AppStore {
   // ─── State ───
   projects: Project[];
@@ -520,7 +651,9 @@ interface AppStore {
   queuedMessages: Record<string, string[]>;
   refreshingSessions: Record<string, boolean>;
   liveStatusBySession: Record<string, string>;
+  contextUsageBySession: Record<string, SessionContextUsage>;
   activeTurnStartedAt: Record<string, number>;
+  claudeToolBlocks: Record<string, ClaudeToolBlock>;
   settings: AppSettings;
   isSending: boolean;
   showSettings: boolean;
@@ -602,7 +735,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   queuedMessages: {},
   refreshingSessions: {},
   liveStatusBySession: {},
+  contextUsageBySession: {},
   activeTurnStartedAt: {},
+  claudeToolBlocks: {},
   settings: {
     codex_bin: null,
     claude_bin: null,
@@ -1027,27 +1162,111 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (event_type === 'claude_stream') {
+      const evt = isRecord(data.event) ? data.event : null;
+      if (!evt) {
+        set((state) => ({
+          liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
+        }));
+        return;
+      }
+
+      const evtType = asString(evt.type);
+
+      if (evtType === 'content_block_start') {
+        const contentBlock = isRecord(evt.content_block) ? evt.content_block : null;
+        if (contentBlock && contentBlock.type === 'tool_use') {
+          const toolName = asString(contentBlock.name) || 'Tool';
+          const index = asNumber(evt.index) ?? 0;
+          set((state) => ({
+            claudeToolBlocks: {
+              ...state.claudeToolBlocks,
+              [session_id]: { name: toolName, inputJson: '', index },
+            },
+            liveStatusBySession: {
+              ...state.liveStatusBySession,
+              [session_id]: claudeToolLiveStatus(toolName),
+            },
+          }));
+        }
+        return;
+      }
+
+      if (evtType === 'content_block_delta') {
+        const delta = isRecord(evt.delta) ? evt.delta : null;
+        if (!delta) return;
+
+        if (delta.type === 'input_json_delta') {
+          const partialJson = asString(delta.partial_json) || '';
+          if (partialJson) {
+            set((state) => {
+              const block = state.claudeToolBlocks[session_id];
+              if (!block) return state;
+              return {
+                claudeToolBlocks: {
+                  ...state.claudeToolBlocks,
+                  [session_id]: { ...block, inputJson: block.inputJson + partialJson },
+                },
+              };
+            });
+          }
+          return;
+        }
+
+        if (delta.type === 'text_delta') {
+          const text = asString(delta.text);
+          if (!text) return;
+          set((state) => {
+            const existing = state.messages[session_id] || [];
+            const updated = mergeMessage(existing, session_id, {
+              role: 'assistant',
+              messageType: 'text',
+              content: text,
+              mode: 'append',
+            });
+            if (updated === existing) return state;
+            return {
+              messages: { ...state.messages, [session_id]: updated },
+              liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
+            };
+          });
+        }
+        return;
+      }
+
+      if (evtType === 'content_block_stop') {
+        const block = get().claudeToolBlocks[session_id];
+        if (block) {
+          let input: JsonRecord = {};
+          try { input = JSON.parse(block.inputJson || '{}') as JsonRecord; } catch { /* ignore */ }
+
+          const content = formatClaudeToolMessage(block.name, input);
+
+          set((state) => {
+            const nextBlocks = { ...state.claudeToolBlocks };
+            delete nextBlocks[session_id];
+
+            const existing = state.messages[session_id] || [];
+            const updated = mergeMessage(existing, session_id, {
+              role: 'assistant',
+              messageType: 'tool',
+              content,
+              mode: 'new',
+            });
+
+            return {
+              claudeToolBlocks: nextBlocks,
+              messages: updated === existing ? state.messages : { ...state.messages, [session_id]: updated },
+              liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
+            };
+          });
+        }
+        return;
+      }
+
+      // Other event types (message_start, message_stop, etc.)
       set((state) => ({
-        liveStatusBySession: {
-          ...state.liveStatusBySession,
-          [session_id]: 'Thinking',
-        },
+        liveStatusBySession: { ...state.liveStatusBySession, [session_id]: 'Thinking' },
       }));
-
-      const delta = parseClaudeDelta(data);
-      if (!delta) return;
-
-      set((state) => {
-        const existing = state.messages[session_id] || [];
-        const updated = mergeMessage(existing, session_id, {
-          role: 'assistant',
-          messageType: 'text',
-          content: delta,
-          mode: 'append',
-        });
-        if (updated === existing) return state;
-        return { messages: { ...state.messages, [session_id]: updated } };
-      });
       return;
     }
 
@@ -1057,11 +1276,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => {
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
+        const nextBlocks = { ...state.claudeToolBlocks };
         delete nextStatus[session_id];
         delete nextStart[session_id];
+        delete nextBlocks[session_id];
         return {
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
+          claudeToolBlocks: nextBlocks,
         };
       });
       void get().flushQueuedMessages(session_id);
@@ -1105,11 +1327,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => {
         const nextStatus = { ...state.liveStatusBySession };
         const nextStart = { ...state.activeTurnStartedAt };
+        const nextBlocks = { ...state.claudeToolBlocks };
         delete nextStatus[session_id];
         delete nextStart[session_id];
+        delete nextBlocks[session_id];
         return {
           liveStatusBySession: nextStatus,
           activeTurnStartedAt: nextStart,
+          claudeToolBlocks: nextBlocks,
         };
       });
       void get().flushQueuedMessages(session_id);

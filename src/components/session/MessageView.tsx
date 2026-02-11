@@ -50,19 +50,18 @@ function hasImagePlaceholder(content: string): boolean {
   return content.split('\n').some((line) => /^\[Image:\s*(.+?)\]\s*$/.test(line));
 }
 
-function isCollapsibleEditToolMessage(content: string): boolean {
+function isCollapsibleToolMessage(content: string): boolean {
   const normalized = content.replace(/\r\n/g, '\n').trim();
   if (!normalized) return false;
-  if (!/^•?\s*edited\b/i.test(normalized)) return false;
   return normalized.includes('\n');
 }
 
-function splitToolEditMessage(content: string): { title: string; details: string | null } {
+function splitToolMessage(content: string): { title: string; details: string | null } {
   const normalized = content.replace(/\r\n/g, '\n').trim();
-  if (!normalized) return { title: 'Edited files', details: null };
+  if (!normalized) return { title: content.trim() || 'Tool', details: null };
 
   const lines = normalized.split('\n');
-  const firstLine = lines[0]?.trim() || 'Edited files';
+  const firstLine = lines[0]?.trim() || 'Tool';
   const details = lines.slice(1).join('\n').trim();
   return {
     title: firstLine.replace(/^•\s*/, ''),
@@ -94,12 +93,17 @@ function ToolEditDetails({ details }: { details: string }) {
 
 function ToolMessageContent({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
+  const collapsible = isCollapsibleToolMessage(content);
+  const { title, details } = splitToolMessage(content);
 
-  if (!isCollapsibleEditToolMessage(content)) {
-    return <span style={{ opacity: 0.7 }}>{content}</span>;
+  if (!collapsible) {
+    return (
+      <div className="tool-message-row">
+        <span className="tool-icon">⏺</span>
+        <span className="tool-title">{content}</span>
+      </div>
+    );
   }
-
-  const { title, details } = splitToolEditMessage(content);
 
   return (
     <div className="tool-edit-message">
@@ -109,13 +113,11 @@ function ToolMessageContent({ content }: { content: string }) {
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
       >
+        <span className="tool-icon">⏺</span>
         <span className={`tool-edit-caret ${expanded ? 'expanded' : ''}`}>▸</span>
         <span className="tool-edit-title">{title}</span>
       </button>
       {expanded && details && <ToolEditDetails details={details} />}
-      {expanded && !details && (
-        <div className="tool-edit-empty">No edit details were provided for this update.</div>
-      )}
     </div>
   );
 }
