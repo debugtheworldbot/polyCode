@@ -31,6 +31,13 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedProviderSession {
+    pub project_id: String,
+    pub provider: AIProvider,
+    pub provider_session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
     User,
@@ -137,5 +144,7 @@ pub struct SessionEvent {
 pub struct AppData {
     pub projects: Vec<Project>,
     pub sessions: Vec<Session>,
+    #[serde(default)]
+    pub deleted_provider_sessions: Vec<DeletedProviderSession>,
     pub settings: AppSettings,
 }

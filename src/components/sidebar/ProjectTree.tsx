@@ -114,10 +114,13 @@ export function ProjectTree() {
   const handleDelete = async () => {
     if (!contextMenu) return;
     setContextMenu(null);
-    if (confirm(t('dialog.deleteConfirm'))) {
-      if (contextMenu.type === 'project') await removeProject(contextMenu.id);
-      else await removeSession(contextMenu.id);
+    if (contextMenu.type === 'project') {
+      if (confirm(t('dialog.deleteConfirm'))) {
+        await removeProject(contextMenu.id);
+      }
+      return;
     }
+    await removeSession(contextMenu.id);
   };
 
 

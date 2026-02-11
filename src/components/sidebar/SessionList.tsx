@@ -74,9 +74,7 @@ export function SessionList() {
 
   const handleDelete = async (sessionId: string) => {
     setContextMenu(null);
-    if (confirm(t('dialog.deleteConfirm'))) {
-      await removeSession(sessionId);
-    }
+    await removeSession(sessionId);
   };
 
 

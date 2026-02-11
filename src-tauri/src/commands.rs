@@ -78,6 +78,8 @@ pub async fn remove_project(
     data.projects.retain(|p| p.id != project_id);
     // Also remove sessions for this project
     data.sessions.retain(|s| s.project_id != project_id);
+    data.deleted_provider_sessions
+        .retain(|entry| entry.project_id != project_id);
     storage::save_data(&data).await?;
     Ok(())
 }
@@ -194,6 +196,17 @@ pub async fn remove_session(
     drop(active);
 
     let mut data = state.data.lock().await;
+    let deleted_session = data.sessions.iter().find(|s| s.id == session_id).cloned();
+    if let Some(session) = deleted_session {
+        if let Some(provider_session_id) = session.provider_session_id.as_deref() {
+            remember_deleted_provider_session(
+                &mut data,
+                &session.project_id,
+                &session.provider,
+                provider_session_id,
+            );
+        }
+    }
     data.sessions.retain(|s| s.id != session_id);
     storage::save_data(&data).await?;
     Ok(())
@@ -1376,6 +1389,15 @@ async fn sync_claude_sessions_for_project(
     let mut changed = false;
 
     for info in claude_sessions {
+        if is_provider_session_deleted(
+            &data,
+            project_id,
+            &AIProvider::Claude,
+            &info.session_id,
+        ) {
+            continue;
+        }
+
         if let Some(existing) = data.sessions.iter_mut().find(|s| {
             s.project_id == project_id
                 && s.provider == AIProvider::Claude
@@ -1458,6 +1480,15 @@ async fn sync_codex_sessions_for_project(
 
     for thread in codex_threads {
         if !is_same_project_path(&thread.cwd, project_path) {
+            continue;
+        }
+
+        if is_provider_session_deleted(
+            &data,
+            project_id,
+            &AIProvider::Codex,
+            &thread.thread_id,
+        ) {
             continue;
         }
 
@@ -1593,6 +1624,46 @@ fn should_refresh_cached_messages(local: &[ChatMessage], remote: &[ChatMessage])
     }
 
     false
+}
+
+fn is_provider_session_deleted(
+    data: &AppData,
+    project_id: &str,
+    provider: &AIProvider,
+    provider_session_id: &str,
+) -> bool {
+    data.deleted_provider_sessions.iter().any(|entry| {
+        entry.project_id == project_id
+            && entry.provider == *provider
+            && entry.provider_session_id == provider_session_id
+    })
+}
+
+fn remember_deleted_provider_session(
+    data: &mut AppData,
+    project_id: &str,
+    provider: &AIProvider,
+    provider_session_id: &str,
+) {
+    let trimmed = provider_session_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let exists = data.deleted_provider_sessions.iter().any(|entry| {
+        entry.project_id == project_id
+            && entry.provider == *provider
+            && entry.provider_session_id == trimmed
+    });
+    if exists {
+        return;
+    }
+
+    data.deleted_provider_sessions.push(DeletedProviderSession {
+        project_id: project_id.to_string(),
+        provider: provider.clone(),
+        provider_session_id: trimmed.to_string(),
+    });
 }
 
 #[tauri::command]
@@ -2302,6 +2373,15 @@ async fn sync_gemini_sessions_for_project(
                 continue;
             }
         };
+
+        if is_provider_session_deleted(
+            &data,
+            project_id,
+            &AIProvider::Gemini,
+            &gemini_session_id,
+        ) {
+            continue;
+        }
 
         // Check if session already exists
         if let Some(existing_idx) = data.sessions.iter().position(|s| {
