@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Folder, Pencil, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
@@ -9,6 +10,18 @@ export function ProjectList() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !contextMenu) return;
+    const rect = el.getBoundingClientRect();
+    let x = contextMenu.x;
+    let y = contextMenu.y;
+    if (rect.bottom > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    if (rect.right > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y < 0) y = 8;
+    if (x < 0) x = 8;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }, [contextMenu]);
 
   useEffect(() => {
     if (editingId && editRef.current) {
@@ -91,8 +104,9 @@ export function ProjectList() {
         </div>
       ))}
       
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
+          ref={contextMenuRef}
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
@@ -105,7 +119,8 @@ export function ProjectList() {
             <Trash2 size={14} />
             {t('session.delete')}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

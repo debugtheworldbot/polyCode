@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Folder, Plus, Pencil, Trash2, Square, RefreshCw } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronRight, ChevronDown, Folder, Plus, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 import { getSessionModelLabel } from '../../constants/models';
@@ -19,7 +20,6 @@ export function ProjectTree() {
     renameProject,
     removeSession,
     renameSession,
-    stopSession,
     refreshSession,
     setShowNewSessionDialog,
     setShowNewProjectDialog,
@@ -37,6 +37,18 @@ export function ProjectTree() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !contextMenu) return;
+    const rect = el.getBoundingClientRect();
+    let x = contextMenu.x;
+    let y = contextMenu.y;
+    if (rect.bottom > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    if (rect.right > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y < 0) y = 8;
+    if (x < 0) x = 8;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }, [contextMenu]);
 
   useEffect(() => {
     if (editingId && editRef.current) {
@@ -102,11 +114,7 @@ export function ProjectTree() {
     }
   };
 
-  const handleStop = async () => {
-    if (!contextMenu || contextMenu.type !== 'session') return;
-    setContextMenu(null);
-    await stopSession(contextMenu.id);
-  };
+
 
   if (projects.length === 0) {
     return (
@@ -159,6 +167,17 @@ export function ProjectTree() {
                   project.name
                 )}
               </div>
+              <button
+                className="project-add-btn"
+                title="New Thread"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (activeProjectId !== project.id) void setActiveProject(project.id);
+                  setShowNewSessionDialog(true);
+                }}
+              >
+                <Plus size={13} />
+              </button>
             </div>
 
             {/* Sessions under project */}
@@ -239,18 +258,6 @@ export function ProjectTree() {
                     <span>Show More ({remaining})</span>
                   </button>
                 )}
-                <button
-                  className="sidebar-item"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (activeProjectId !== project.id) void setActiveProject(project.id);
-                    setShowNewSessionDialog(true);
-                  }}
-                  style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}
-                >
-                  <Plus size={12} />
-                  <span>New Thread</span>
-                </button>
               </div>
             )}
           </div>
@@ -258,8 +265,9 @@ export function ProjectTree() {
       })}
 
       {/* Context menu */}
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
+          ref={contextMenuRef}
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
@@ -268,17 +276,12 @@ export function ProjectTree() {
             <Pencil size={14} />
             {t('session.rename')}
           </div>
-          {contextMenu.type === 'session' && (
-            <div className="context-menu-item" onClick={handleStop}>
-              <Square size={14} />
-              {t('session.stop')}
-            </div>
-          )}
-          <div className="context-menu-item danger" onClick={handleDelete}>
+<div className="context-menu-item danger" onClick={handleDelete}>
             <Trash2 size={14} />
             {t('session.delete')}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { FolderOpen, GitCommit, ChevronRight, Sidebar, MoreHorizontal } from 'lucide-react';
+import { GitCommit, ChevronRight, Sidebar } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../../store';
 import { getSessionModelLabel } from '../../constants/models';
@@ -86,10 +86,6 @@ export function SessionHeader() {
       </div>
 
       <div className="header-actions">
-        <button className="header-btn">
-          <FolderOpen size={14} />
-          <span>Open</span>
-        </button>
         <button
           type="button"
           className="header-btn"
@@ -99,10 +95,6 @@ export function SessionHeader() {
         >
           <GitCommit size={14} />
           <span>Git</span>
-        </button>
-        <div style={{ width: '1px', height: '20px', background: 'var(--color-divider)', margin: '0 4px' }} />
-        <button className="header-btn" style={{ padding: '4px 6px' }}>
-          <MoreHorizontal size={14} />
         </button>
       </div>
     </div>

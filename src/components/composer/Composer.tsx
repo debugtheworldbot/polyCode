@@ -1,15 +1,23 @@
 import { useState, useRef, useEffect } from 'react';
-import { Square, Plus, Mic, ChevronDown, X } from 'lucide-react';
+import { Square, Plus, X } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useAppStore } from '../../store';
 import * as api from '../../services/tauri';
 import { t } from '../../i18n';
-import { MODEL_OPTIONS_BY_PROVIDER, getSessionModelLabel } from '../../constants/models';
 
 function getFileName(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   const segments = normalized.split('/');
   return segments[segments.length - 1] || path;
+}
+
+function getQueuedPreview(content: string): string {
+  const textOnly = content
+    .replace(/\[Image:\s*.+?\]\s*/g, '[Image] ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!textOnly) return '[Image]';
+  return textOnly.length > 120 ? `${textOnly.slice(0, 120)}...` : textOnly;
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -36,14 +44,11 @@ export function Composer() {
     isSending,
     sendMessage,
     stopSession,
-    setSessionModel,
   } = useAppStore();
   const [input, setInput] = useState('');
   const [images, setImages] = useState<string[]>([]);
-  const [showModelMenu, setShowModelMenu] = useState(false);
   const composerContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   useEffect(() => {
@@ -60,22 +65,8 @@ export function Composer() {
   }, [activeSessionId]);
 
   useEffect(() => {
-    setShowModelMenu(false);
-  }, [activeSessionId]);
-
-  useEffect(() => {
     setImages([]);
   }, [activeSessionId]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!modelMenuRef.current) return;
-      if (modelMenuRef.current.contains(event.target as Node)) return;
-      setShowModelMenu(false);
-    };
-    window.addEventListener('mousedown', handleClickOutside);
-    return () => window.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   useEffect(() => {
     const container = composerContainerRef.current;
@@ -168,10 +159,7 @@ export function Composer() {
 
   if (!activeSession) return null;
 
-  const modelOptions = MODEL_OPTIONS_BY_PROVIDER[activeSession.provider];
-  const selectedModel = activeSession.model?.trim() || '';
-  const selectedOption = modelOptions.find((option) => option.value === selectedModel);
-  const modelLabel = selectedOption?.label || getSessionModelLabel(activeSession.provider, selectedModel);
+  const queuedItems = queuedMessages[activeSessionId] || [];
   const queuedCount = queuedMessages[activeSessionId]?.length || 0;
   const statusLabel = isSending
     ? queuedCount > 0
@@ -182,6 +170,16 @@ export function Composer() {
 
   return (
     <div className="composer-container" ref={composerContainerRef}>
+      {queuedItems.length > 0 && (
+        <div className="composer-queue">
+          {queuedItems.map((content, index) => (
+            <div key={`composer-queue-${index}-${content}`} className="composer-queue-item">
+              <span className="composer-queue-label">#{index + 1}</span>
+              <span className="composer-queue-preview">{getQueuedPreview(content)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="composer-box">
         <textarea
           ref={textareaRef}
@@ -227,54 +225,13 @@ export function Composer() {
             <button className="icon-btn" title={t('composer.addImage')} onClick={handlePickImages}>
               <Plus size={18} />
             </button>
-            <div className="model-selector-wrap" ref={modelMenuRef}>
-              <button
-                className="icon-btn model-btn"
-                style={{ gap: '6px', paddingRight: '8px', fontSize: '12px' }}
-                onClick={() => setShowModelMenu((prev) => !prev)}
-              >
-                <span className="model-label">{modelLabel}</span>
-                <span className={`model-status ${statusClassName}`}>
-                  <span className="model-status-dot" />
-                  <span className="model-status-text">{statusLabel}</span>
-                </span>
-                <ChevronDown size={12} />
-              </button>
-              {showModelMenu && (
-                <div className="model-menu">
-                  {modelOptions.map((option) => {
-                    const isSelected = option.value === selectedModel;
-                    return (
-                      <button
-                        key={option.value || '__default'}
-                        className={`model-menu-item ${isSelected ? 'selected' : ''}`}
-                        onClick={async () => {
-                          try {
-                            await setSessionModel(activeSessionId, option.value || null);
-                          } catch (e) {
-                            console.error('Failed to switch model:', e);
-                          }
-                          setShowModelMenu(false);
-                        }}
-                      >
-                        <span>{option.label}</span>
-                        {isSelected && <span>✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <button className="icon-btn" style={{ gap: '4px', paddingRight: '8px', fontSize: '12px' }}>
-               <span>High</span>
-               <ChevronDown size={12} />
-            </button>
+            <span className={`model-status ${statusClassName}`} style={{ fontSize: '12px', marginLeft: '2px' }}>
+              <span className="model-status-dot" />
+              <span className="model-status-text">{statusLabel}</span>
+            </span>
           </div>
           
           <div className="composer-actions-right">
-             <button className="icon-btn">
-               <Mic size={18} />
-             </button>
             {isSending && (
               <button
                 className="icon-btn"

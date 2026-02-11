@@ -209,7 +209,6 @@ export function MessageView() {
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const currentMessages = activeSessionId ? messages[activeSessionId] || [] : [];
-  const queuedItems = activeSessionId ? (queuedMessages[activeSessionId] || []) : [];
   const queuedCount = activeSessionId ? (queuedMessages[activeSessionId]?.length || 0) : 0;
   const liveStatus = activeSessionId ? liveStatusBySession[activeSessionId] : '';
   const turnStartedAt = activeSessionId ? activeTurnStartedAt[activeSessionId] : undefined;
@@ -221,7 +220,7 @@ export function MessageView() {
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentMessages, queuedItems, isSending]);
+  }, [currentMessages, isSending]);
 
   useEffect(() => {
     if (!isSending) return;
@@ -254,7 +253,7 @@ export function MessageView() {
         shouldAutoScrollRef.current = nearBottom;
       }}
     >
-      {currentMessages.length === 0 && queuedCount === 0 && (
+      {currentMessages.length === 0 && (
         <div className="empty-state" style={{ flex: 1 }}>
           <div style={{
             width: '64px',
@@ -279,19 +278,6 @@ export function MessageView() {
 
       {currentMessages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} provider={activeSession.provider} />
-      ))}
-
-      {queuedItems.map((content, index) => (
-        <div
-          key={`queued-${index}-${content}`}
-          className={`message-bubble user queued ${hasImagePlaceholder(content) ? 'with-image' : ''} animate-fadeIn`}
-          style={{ animationDelay: `${0.06 * (index + 1)}s` }}
-        >
-          <div className="markdown-body" style={{ wordBreak: 'break-word' }}>
-            <MessageContent content={content} imagesFirst />
-          </div>
-          <span className="queued-tag">queued</span>
-        </div>
       ))}
 
       {isSending && (

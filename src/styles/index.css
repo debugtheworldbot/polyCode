@@ -204,6 +204,35 @@ body {
   cursor: default;
 }
 
+.project-add-btn {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  flex-shrink: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-item:hover .project-add-btn {
+  opacity: 0.95;
+  pointer-events: auto;
+}
+
+.project-add-btn:hover {
+  background: var(--color-sidebar-hover);
+  color: var(--color-text);
+  opacity: 1;
+}
+
 .session-refresh-icon.spinning {
   animation: polycode-spin 1s linear infinite;
 }
@@ -931,6 +960,46 @@ body {
   background: transparent;
   min-width: 0;
   pointer-events: none;
+}
+
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  max-height: 128px;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.composer-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--color-border) 78%, transparent);
+  background: color-mix(in srgb, var(--color-user-bubble) 72%, transparent);
+  color: color-mix(in srgb, var(--color-user-text) 80%, var(--color-text-secondary) 20%);
+  font-size: 12px;
+}
+
+.composer-queue-label {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.composer-queue-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-box {

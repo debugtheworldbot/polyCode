@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Plus, MoreHorizontal, Pencil, Trash2, Square, RefreshCw } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { MessageCircle, Plus, MoreHorizontal, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { t } from '../../i18n';
 import { getSessionModelLabel } from '../../constants/models';
@@ -11,7 +12,6 @@ export function SessionList() {
     setActiveSession,
     removeSession,
     renameSession,
-    stopSession,
     refreshSession,
     refreshingSessions,
     setShowNewSessionDialog,
@@ -21,6 +21,18 @@ export function SessionList() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const editRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !contextMenu) return;
+    const rect = el.getBoundingClientRect();
+    let x = contextMenu.x;
+    let y = contextMenu.y;
+    if (rect.bottom > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    if (rect.right > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y < 0) y = 8;
+    if (x < 0) x = 8;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }, [contextMenu]);
 
   useEffect(() => {
     if (editingId && editRef.current) {
@@ -64,10 +76,7 @@ export function SessionList() {
     }
   };
 
-  const handleStop = async (sessionId: string) => {
-    setContextMenu(null);
-    await stopSession(sessionId);
-  };
+
 
   const sortedSessions = [...sessions].sort((a, b) => b.updated_at - a.updated_at);
 
@@ -141,8 +150,9 @@ export function SessionList() {
         </div>
       ))}
 
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
+          ref={contextMenuRef}
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
@@ -151,15 +161,12 @@ export function SessionList() {
             <Pencil size={14} />
             {t('session.rename')}
           </div>
-          <div className="context-menu-item" onClick={() => handleStop(contextMenu.sessionId)}>
-            <Square size={14} />
-            {t('session.stop')}
-          </div>
-          <div className="context-menu-item danger" onClick={() => handleDelete(contextMenu.sessionId)}>
+<div className="context-menu-item danger" onClick={() => handleDelete(contextMenu.sessionId)}>
             <Trash2 size={14} />
             {t('session.delete')}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
