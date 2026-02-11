@@ -105,6 +105,7 @@ export function Composer() {
   const composerContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposingRef = useRef(false);
+  const compositionEndedAtRef = useRef<number>(0);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const images = activeSessionId ? imagesBySession[activeSessionId] || [] : [];
 
@@ -250,8 +251,10 @@ export function Composer() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     const isImeComposing =
       isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229;
+    const isEnterRightAfterCompositionEnd =
+      e.key === 'Enter' && e.timeStamp - compositionEndedAtRef.current < 50;
 
-    if (isImeComposing && e.key === 'Enter') {
+    if ((isImeComposing && e.key === 'Enter') || isEnterRightAfterCompositionEnd) {
       return;
     }
 
@@ -424,8 +427,9 @@ export function Composer() {
           onCompositionStart={() => {
             isComposingRef.current = true;
           }}
-          onCompositionEnd={() => {
+          onCompositionEnd={(e) => {
             isComposingRef.current = false;
+            compositionEndedAtRef.current = e.timeStamp;
           }}
           onKeyDown={handleKeyDown}
           onSelect={(e) => {
@@ -506,7 +510,6 @@ export function Composer() {
                       }}
                     />
                   </svg>
-                  <span className="context-ring-core" aria-hidden="true" />
                 </div>
                 <div className="context-tooltip" role="status">
                   <div className="context-tooltip-title">Context Usage</div>
