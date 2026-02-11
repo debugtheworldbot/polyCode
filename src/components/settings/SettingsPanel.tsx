@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, Check, AlertCircle } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { checkCliAvailable } from '../../services/tauri';
 import { t } from '../../i18n';
 import type { AppSettings, CLIStatus } from '../../types';
+import { applyTheme, applyWindowTransparency } from './appearance';
 
 const DEFAULT_WINDOW_TRANSPARENCY = 80;
 
@@ -14,23 +15,7 @@ export function SettingsPanel() {
   const [claudeStatus, setClaudeStatus] = useState<CLIStatus | null>(null);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    setLocalSettings(settings);
-  }, [settings]);
-
-  useEffect(() => {
-    if (showSettings) {
-      checkCLIs();
-    }
-  }, [showSettings]);
-
-  useEffect(() => {
-    if (!showSettings) {
-      applyWindowTransparency(settings.window_transparency);
-    }
-  }, [showSettings, settings.window_transparency]);
-
-  const checkCLIs = async () => {
+  const checkCLIs = useCallback(async () => {
     try {
       const codex = await checkCliAvailable(localSettings.codex_bin || 'codex');
       setCodexStatus(codex);
@@ -43,7 +28,23 @@ export function SettingsPanel() {
     } catch {
       setClaudeStatus({ available: false, path: null });
     }
-  };
+  }, [localSettings.codex_bin, localSettings.claude_bin]);
+
+  useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    if (showSettings) {
+      void checkCLIs();
+    }
+  }, [showSettings, checkCLIs]);
+
+  useEffect(() => {
+    if (!showSettings) {
+      applyWindowTransparency(settings.window_transparency);
+    }
+  }, [showSettings, settings.window_transparency]);
 
   const handleSave = async () => {
     try {
@@ -234,44 +235,3 @@ export function SettingsPanel() {
     </div>
   );
 }
-
-function applyTheme(theme: string) {
-  const root = document.documentElement;
-  if (theme === 'dark') {
-    root.classList.add('dark');
-  } else if (theme === 'light') {
-    root.classList.remove('dark');
-  } else {
-    // System preference
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (prefersDark) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-  }
-}
-
-function clampTransparency(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_WINDOW_TRANSPARENCY;
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function applyWindowTransparency(transparency: number) {
-  const level = clampTransparency(transparency);
-  const ratio = level / 100;
-  const root = document.documentElement;
-
-  const lightBgAlpha = 0.78 - ratio * 0.28;
-  const lightSidebarAlpha = 0.62 - ratio * 0.28;
-  const darkBgAlpha = 0.74 - ratio * 0.28;
-  const darkSidebarAlpha = 0.58 - ratio * 0.24;
-
-  root.style.setProperty('--glass-alpha-bg-light', lightBgAlpha.toFixed(2));
-  root.style.setProperty('--glass-alpha-sidebar-light', lightSidebarAlpha.toFixed(2));
-  root.style.setProperty('--glass-alpha-bg-dark', darkBgAlpha.toFixed(2));
-  root.style.setProperty('--glass-alpha-sidebar-dark', darkSidebarAlpha.toFixed(2));
-}
-
-// Export for use in App initialization
-export { applyTheme, applyWindowTransparency };

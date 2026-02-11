@@ -6,7 +6,7 @@ import { SessionHeader } from './components/session/SessionHeader';
 import { MessageView } from './components/session/MessageView';
 import { Composer } from './components/composer/Composer';
 import { SettingsPanel } from './components/settings/SettingsPanel';
-import { applyTheme, applyWindowTransparency } from './components/settings/SettingsPanel';
+import { applyTheme, applyWindowTransparency } from './components/settings/appearance';
 import { NewProjectDialog } from './components/common/NewProjectDialog';
 import { NewSessionDialog } from './components/common/NewSessionDialog';
 import { GitPanel } from './components/git/GitPanel';

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import ReactMarkdown from 'react-markdown';
@@ -123,13 +123,8 @@ function ToolMessageContent({ content }: { content: string }) {
 }
 
 function LocalImage({ path, alt }: { path: string; alt?: string }) {
-  const [resolvedSrc, setResolvedSrc] = useState(convertFileSrc(path));
+  const [resolvedSrc, setResolvedSrc] = useState(() => convertFileSrc(path));
   const [fallbackTried, setFallbackTried] = useState(false);
-
-  useEffect(() => {
-    setFallbackTried(false);
-    setResolvedSrc(convertFileSrc(path));
-  }, [path]);
 
   const handleError = async () => {
     if (fallbackTried) return;
@@ -170,7 +165,7 @@ function MessageContent({ content, imagesFirst = false }: { content: string; ima
   );
 }
 
-function MessageBubble({ message, provider }: { message: ChatMessage; provider?: string }) {
+function MessageBubble({ message }: { message: ChatMessage }) {
   const roleClass = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
   const isTool = message.message_type === 'tool';
   const hasImage = hasImagePlaceholder(message.content);
@@ -203,17 +198,24 @@ export function MessageView() {
     queuedMessages,
     liveStatusBySession,
     activeTurnStartedAt,
-    isSending,
+    sendingBySession,
   } = useAppStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
-  const [now, setNow] = useState(Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  const activeSession = sessions.find(s => s.id === activeSessionId);
-  const currentMessages = activeSessionId ? messages[activeSessionId] || [] : [];
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId),
+    [sessions, activeSessionId]
+  );
+  const currentMessages = useMemo(
+    () => (activeSessionId ? messages[activeSessionId] || [] : []),
+    [activeSessionId, messages]
+  );
   const queuedCount = activeSessionId ? (queuedMessages[activeSessionId]?.length || 0) : 0;
   const liveStatus = activeSessionId ? liveStatusBySession[activeSessionId] : '';
   const turnStartedAt = activeSessionId ? activeTurnStartedAt[activeSessionId] : undefined;
+  const isSending = activeSessionId ? Boolean(sendingBySession[activeSessionId]) : false;
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
@@ -225,16 +227,23 @@ export function MessageView() {
   }, [currentMessages, isSending]);
 
   useEffect(() => {
-    if (!isSending) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [isSending]);
+    if (!isSending || !turnStartedAt) return;
 
-  const elapsedSeconds = turnStartedAt
-    ? Math.max(0, Math.floor((now - turnStartedAt) / 1000))
-    : 0;
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
+    const updateElapsed = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - turnStartedAt) / 1000)));
+    };
+
+    const initialTimer = window.setTimeout(updateElapsed, 0);
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [isSending, turnStartedAt]);
+
+  const safeElapsedSeconds = turnStartedAt ? elapsedSeconds : 0;
+  const minutes = Math.floor(safeElapsedSeconds / 60);
+  const seconds = safeElapsedSeconds % 60;
   const elapsedLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 
   if (!activeSessionId || !activeSession) {
@@ -279,7 +288,7 @@ export function MessageView() {
       )}
 
       {currentMessages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} provider={activeSession.provider} />
+        <MessageBubble key={msg.id} message={msg} />
       ))}
 
       {isSending && (

@@ -92,19 +92,21 @@ export function Composer() {
     contextUsageBySession,
     liveStatusBySession,
     activeTurnStartedAt,
-    isSending,
+    sendingBySession,
     sendMessage,
     stopSession,
   } = useAppStore();
   const [input, setInput] = useState('');
-  const [images, setImages] = useState<string[]>([]);
+  const [imagesBySession, setImagesBySession] = useState<Record<string, string[]>>({});
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_CODEX_SLASH_COMMANDS);
   const [showSlashPopover, setShowSlashPopover] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const composerContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const images = activeSessionId ? imagesBySession[activeSessionId] || [] : [];
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -120,18 +122,9 @@ export function Composer() {
   }, [activeSessionId]);
 
   useEffect(() => {
-    setImages([]);
-  }, [activeSessionId]);
+    if (activeSession?.provider !== 'codex') return;
 
-  useEffect(() => {
     let cancelled = false;
-    if (activeSession?.provider !== 'codex') {
-      setShowSlashPopover(false);
-      setSlashCommands(FALLBACK_CODEX_SLASH_COMMANDS);
-      return () => {
-        cancelled = true;
-      };
-    }
 
     api
       .listCodexSlashCommands()
@@ -186,12 +179,17 @@ export function Composer() {
     return slashCommands.filter((item) => item.command.slice(1).toLowerCase().startsWith(query));
   }, [slashCommands, slashQuery]);
 
-  useEffect(() => {
-    setActiveSlashIndex((prev) => {
-      if (filteredSlashCommands.length === 0) return 0;
-      return Math.min(prev, filteredSlashCommands.length - 1);
-    });
-  }, [filteredSlashCommands.length]);
+  const normalizedActiveSlashIndex = filteredSlashCommands.length === 0
+    ? 0
+    : Math.min(activeSlashIndex, filteredSlashCommands.length - 1);
+
+  const updateCurrentSessionImages = (updater: (prev: string[]) => string[]) => {
+    if (!activeSessionId) return;
+    setImagesBySession((prev) => ({
+      ...prev,
+      [activeSessionId]: updater(prev[activeSessionId] || []),
+    }));
+  };
 
   const syncSlashPopover = (nextInput: string, caret: number | null) => {
     if (activeSession?.provider !== 'codex' || caret === null) {
@@ -238,7 +236,7 @@ export function Composer() {
       .join('\n');
     const msg = [text, imageMarkdown].filter(Boolean).join('\n\n');
     setInput('');
-    setImages([]);
+    updateCurrentSessionImages(() => []);
     setShowSlashPopover(false);
     await sendMessage(msg);
   };
@@ -250,6 +248,13 @@ export function Composer() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const isImeComposing =
+      isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229;
+
+    if (isImeComposing && e.key === 'Enter') {
+      return;
+    }
+
     if (showSlashPopover) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -269,7 +274,9 @@ export function Composer() {
       }
       if ((e.key === 'Enter' || e.key === 'Tab') && filteredSlashCommands.length > 0) {
         e.preventDefault();
-        applySlashCommand(filteredSlashCommands[activeSlashIndex]?.command || filteredSlashCommands[0].command);
+        applySlashCommand(
+          filteredSlashCommands[normalizedActiveSlashIndex]?.command || filteredSlashCommands[0].command
+        );
         return;
       }
       if (e.key === 'Escape') {
@@ -295,14 +302,14 @@ export function Composer() {
     try {
       const selected = await api.pickImages();
       if (selected.length === 0) return;
-      setImages((prev) => Array.from(new Set([...prev, ...selected])));
+      updateCurrentSessionImages((prev) => Array.from(new Set([...prev, ...selected])));
     } catch (e) {
       console.error('Failed to pick images:', e);
     }
   };
 
   const handleRemoveImage = (target: string) => {
-    setImages((prev) => prev.filter((path) => path !== target));
+    updateCurrentSessionImages((prev) => prev.filter((path) => path !== target));
   };
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -321,7 +328,7 @@ export function Composer() {
           return api.savePastedImage(dataUrl);
         })
       );
-      setImages((prev) => Array.from(new Set([...prev, ...savedPaths])));
+      updateCurrentSessionImages((prev) => Array.from(new Set([...prev, ...savedPaths])));
     } catch (err) {
       console.error('Failed to paste image:', err);
     }
@@ -331,12 +338,13 @@ export function Composer() {
 
   if (!activeSession) return null;
 
+  const isSending = Boolean(sendingBySession[activeSessionId]);
   const queuedItems = queuedMessages[activeSessionId] || [];
   const queuedCount = queuedMessages[activeSessionId]?.length || 0;
   const contextUsage = contextUsageBySession[activeSessionId] || null;
   const usedTokens = contextUsage?.usedTokens ?? 0;
   const maxTokens = contextUsage?.maxTokens ?? null;
-  const lastTurnTokens = contextUsage?.lastTotalTokens ?? 0;
+  const sessionTotalTokens = contextUsage?.sessionTotalTokens ?? 0;
   const totalInputTokens = contextUsage?.totalInputTokens ?? 0;
   const totalOutputTokens = contextUsage?.totalOutputTokens ?? 0;
   const totalCachedInputTokens = contextUsage?.totalCachedInputTokens ?? 0;
@@ -345,9 +353,18 @@ export function Composer() {
   const contextPercentClamped = contextPercent === null
     ? 0
     : Math.max(0, Math.min(100, contextPercent));
+  const contextRingColor = contextPercent === null
+    ? 'color-mix(in srgb, var(--color-border) 80%, transparent)'
+    : contextPercentClamped >= 90
+      ? 'var(--color-error)'
+      : contextPercentClamped >= 75
+        ? 'var(--color-claude)'
+        : 'var(--color-success)';
   const contextPercentText = contextPercent === null
     ? '--'
     : `${contextPercentClamped.toFixed(1)}%`;
+  const contextRingProgress = contextPercent === null ? 0 : contextPercentClamped;
+  const contextRingLinecap = contextRingProgress >= 100 ? 'butt' : 'round';
   const statusLabel = isSending
     ? queuedCount > 0
       ? `${t('session.running')} · ${queuedCount} queued`
@@ -371,14 +388,14 @@ export function Composer() {
         </div>
       )}
       <div className="composer-box">
-        {showSlashPopover && (
+        {activeSession.provider === 'codex' && showSlashPopover && (
           <div className="slash-popover" role="listbox" aria-label="Codex slash commands">
             {filteredSlashCommands.length > 0 ? (
               filteredSlashCommands.map((item, index) => (
                 <button
                   key={item.command}
                   type="button"
-                  className={`slash-popover-item ${index === activeSlashIndex ? 'active' : ''}`}
+                  className={`slash-popover-item ${index === normalizedActiveSlashIndex ? 'active' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     applySlashCommand(item.command);
@@ -403,6 +420,12 @@ export function Composer() {
             const nextInput = e.target.value;
             setInput(nextInput);
             syncSlashPopover(nextInput, e.target.selectionStart);
+          }}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
           }}
           onKeyDown={handleKeyDown}
           onSelect={(e) => {
@@ -462,11 +485,28 @@ export function Composer() {
           
           <div className="composer-actions-right">
             {activeSession.provider === 'codex' && (
-              <div className="context-meter" style={{ ['--context-progress' as string]: `${contextPercentClamped}%` }}>
-                <div className="context-ring" aria-label="Context usage">
-                  <span className="context-ring-text">
-                    {contextPercent === null ? '' : `${Math.round(contextPercentClamped)}%`}
-                  </span>
+              <div
+                className="context-meter"
+                style={{
+                  ['--context-ring-color' as string]: contextRingColor,
+                }}
+              >
+                <div className="context-ring" aria-label={`Context usage ${contextPercentText}`} role="img">
+                  <svg className="context-ring-svg" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="context-ring-track" cx="12" cy="12" r="9" />
+                    <circle
+                      className="context-ring-progress"
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      pathLength={100}
+                      style={{
+                        strokeDasharray: `${contextRingProgress} 100`,
+                        strokeLinecap: contextRingLinecap,
+                      }}
+                    />
+                  </svg>
+                  <span className="context-ring-core" aria-hidden="true" />
                 </div>
                 <div className="context-tooltip" role="status">
                   <div className="context-tooltip-title">Context Usage</div>
@@ -487,8 +527,8 @@ export function Composer() {
                         </strong>
                       </div>
                       <div className="context-tooltip-line">
-                        <span>Last turn</span>
-                        <strong>{formatTokenCount(lastTurnTokens)}</strong>
+                        <span>Session total</span>
+                        <strong>{formatTokenCount(sessionTotalTokens)}</strong>
                       </div>
                       <div className="context-tooltip-line">
                         <span>Input / Output</span>

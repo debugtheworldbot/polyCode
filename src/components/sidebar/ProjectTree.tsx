@@ -28,7 +28,7 @@ export function ProjectTree() {
   } = useAppStore();
 
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
-  const prevVisibleCounts = useRef<Record<string, number>>({});
+  const [animatingFromCounts, setAnimatingFromCounts] = useState<Record<string, number>>({});
   const PAGE_SIZE = 10;
 
   const [contextMenu, setContextMenu] = useState<{
@@ -59,10 +59,6 @@ export function ProjectTree() {
       editRef.current.select();
     }
   }, [editingId]);
-
-  useEffect(() => {
-    prevVisibleCounts.current = { ...visibleCounts };
-  }, [visibleCounts]);
 
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
@@ -141,7 +137,7 @@ export function ProjectTree() {
           .slice()
           .sort((a, b) => b.updated_at - a.updated_at);
         const visibleCount = visibleCounts[project.id] || PAGE_SIZE;
-        const prevCount = prevVisibleCounts.current[project.id] || PAGE_SIZE;
+        const prevCount = animatingFromCounts[project.id] ?? visibleCount;
         const sessions = allSessions.slice(0, visibleCount);
         const hasMore = allSessions.length > visibleCount;
         const remaining = allSessions.length - visibleCount;
@@ -276,10 +272,23 @@ export function ProjectTree() {
                     className="sidebar-item show-more-btn"
                     onClick={(e) => {
                       e.stopPropagation();
+                      const currentCount = visibleCounts[project.id] || PAGE_SIZE;
+                      setAnimatingFromCounts((prev) => ({
+                        ...prev,
+                        [project.id]: currentCount,
+                      }));
                       setVisibleCounts((prev) => ({
                         ...prev,
-                        [project.id]: (prev[project.id] || PAGE_SIZE) + PAGE_SIZE,
+                        [project.id]: currentCount + PAGE_SIZE,
                       }));
+                      window.setTimeout(() => {
+                        setAnimatingFromCounts((prev) => {
+                          if (!(project.id in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[project.id];
+                          return next;
+                        });
+                      }, 420);
                     }}
                   >
                     <span>Show More ({remaining})</span>
