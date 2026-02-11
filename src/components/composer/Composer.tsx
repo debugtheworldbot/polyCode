@@ -41,6 +41,7 @@ export function Composer() {
   const [input, setInput] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const composerContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -75,6 +76,32 @@ export function Composer() {
     window.addEventListener('mousedown', handleClickOutside);
     return () => window.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const container = composerContainerRef.current;
+    if (!container) return;
+    const mainContent = container.closest('.main-content');
+    if (!(mainContent instanceof HTMLElement)) return;
+
+    const updateSafePadding = () => {
+      const { height } = container.getBoundingClientRect();
+      const bottomOffset = Number.parseFloat(window.getComputedStyle(container).bottom) || 0;
+      const safePadding = Math.ceil(height + bottomOffset + 16);
+      mainContent.style.setProperty('--composer-safe-padding', `${safePadding}px`);
+    };
+
+    updateSafePadding();
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateSafePadding) : null;
+    observer?.observe(container);
+    window.addEventListener('resize', updateSafePadding);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateSafePadding);
+      mainContent.style.removeProperty('--composer-safe-padding');
+    };
+  }, [activeSessionId]);
 
   const handleSend = async () => {
     if ((!input.trim() && images.length === 0) || !activeSessionId) return;
@@ -154,7 +181,7 @@ export function Composer() {
   const statusClassName = isSending ? 'running' : 'idle';
 
   return (
-    <div className="composer-container">
+    <div className="composer-container" ref={composerContainerRef}>
       <div className="composer-box">
         <textarea
           ref={textareaRef}

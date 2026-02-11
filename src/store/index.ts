@@ -44,6 +44,190 @@ function compactText(value: string, max = 120): string {
   return `${normalized.slice(0, max - 1)}…`;
 }
 
+function normalizeMultiline(value: string): string {
+  return value.replace(/\r\n/g, '\n').trim();
+}
+
+function asCount(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value));
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.max(0, Math.round(parsed));
+  }
+  return null;
+}
+
+function firstNonEmptyCount(values: Array<unknown>): number | null {
+  for (const value of values) {
+    const count = asCount(value);
+    if (count !== null) return count;
+  }
+  return null;
+}
+
+function readFirstText(record: JsonRecord, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== 'string') continue;
+    if (!value.trim()) continue;
+    return value;
+  }
+  return null;
+}
+
+function renderFileChangeLine(line: unknown): string | null {
+  if (typeof line === 'string') {
+    return line.trim() ? line : null;
+  }
+
+  if (!isRecord(line)) return null;
+
+  const text = readFirstText(line, ['text', 'content', 'value']);
+  if (!text) return null;
+
+  const prefixedText = /^\s*[+-]/.test(text) ? text : null;
+  if (prefixedText) return prefixedText;
+
+  const explicitPrefix = readFirstText(line, ['prefix', 'sign']);
+  if (explicitPrefix) {
+    return `${explicitPrefix}${text}`;
+  }
+
+  const kind = normalizeItemType(
+    readFirstText(line, ['type', 'kind', 'changeType', 'change_type']) ?? ''
+  );
+  if (kind.includes('add') || kind.includes('insert')) return `+ ${text}`;
+  if (kind.includes('remove') || kind.includes('delete')) return `- ${text}`;
+  if (kind.includes('context') || kind.includes('same') || kind.includes('unchanged')) return `  ${text}`;
+
+  return text;
+}
+
+function renderFileChangeBody(change: JsonRecord): string | null {
+  const inline = readFirstText(change, [
+    'preview',
+    'snippet',
+    'diff',
+    'patch',
+    'text',
+    'details',
+    'rendered',
+    'content',
+  ]);
+  if (inline) return normalizeMultiline(inline);
+
+  const hunks = Array.isArray(change.hunks) ? change.hunks : [];
+  const renderedHunks = hunks
+    .map((hunk) => {
+      if (!isRecord(hunk)) return null;
+      const lines = Array.isArray(hunk.lines) ? hunk.lines : [];
+      const renderedLines = lines
+        .map((line) => renderFileChangeLine(line))
+        .filter((line): line is string => !!line && line.trim().length > 0);
+      if (renderedLines.length === 0) return null;
+      const header = readFirstText(hunk, ['header', 'title', 'range']);
+      return header ? `${header}\n${renderedLines.join('\n')}` : renderedLines.join('\n');
+    })
+    .filter((block): block is string => !!block);
+  if (renderedHunks.length > 0) return renderedHunks.join('\n');
+
+  const lines = Array.isArray(change.lines) ? change.lines : [];
+  const renderedLines = lines
+    .map((line) => renderFileChangeLine(line))
+    .filter((line): line is string => !!line && line.trim().length > 0);
+  if (renderedLines.length > 0) return renderedLines.join('\n');
+
+  return null;
+}
+
+function renderFileChangeEntry(change: JsonRecord, index: number): string {
+  const path = firstNonEmptyString([change.path, change.filePath, change.file]) || `file ${index + 1}`;
+  const added = firstNonEmptyCount([
+    change.added,
+    change.additions,
+    change.addedLines,
+    change.added_lines,
+    change.insertions,
+    change.inserted,
+  ]);
+  const removed = firstNonEmptyCount([
+    change.removed,
+    change.deletions,
+    change.removedLines,
+    change.removed_lines,
+    change.deleted,
+  ]);
+
+  const countPieces: string[] = [];
+  if (added !== null) countPieces.push(`+${added}`);
+  if (removed !== null) countPieces.push(`-${removed}`);
+
+  const title = countPieces.length > 0
+    ? `• Edited ${path} (${countPieces.join(' ')})`
+    : `• Edited ${path}`;
+
+  const body = renderFileChangeBody(change);
+  return body ? `${title}\n${body}` : title;
+}
+
+function buildFileChangeMessage(item: JsonRecord): string {
+  const changes = Array.isArray(item.changes)
+    ? item.changes.filter((change): change is JsonRecord => isRecord(change))
+    : [];
+  const status = asString(item.status);
+
+  const paths = changes
+    .map((change) => firstNonEmptyString([change.path, change.filePath, change.file]))
+    .filter((path): path is string => !!path && path.trim().length > 0);
+
+  let summary: string;
+  if (paths.length === 1) {
+    summary = `Edited ${paths[0]}`;
+  } else if (paths.length > 1) {
+    const shown = paths.slice(0, 2);
+    const remaining = paths.length - shown.length;
+    summary = remaining > 0
+      ? `Edited ${shown.join(', ')} +${remaining} files`
+      : `Edited ${shown.join(', ')}`;
+  } else {
+    const count = changes.length;
+    summary = count > 0
+      ? `Edited ${count} file${count === 1 ? '' : 's'}`
+      : 'Edited files';
+  }
+
+  const summaryWithStatus = status ? `${summary} (${status})` : summary;
+
+  const topLevelDetails = readFirstText(item, ['text', 'preview', 'diff', 'patch', 'details']);
+  if (topLevelDetails) {
+    const normalized = normalizeMultiline(topLevelDetails);
+    if (normalized) {
+      const editStyle = /^•?\s*edited\b/i.test(normalized);
+      if (editStyle) return normalized;
+      return `${summaryWithStatus}\n${normalized}`;
+    }
+  }
+
+  const changeBlocks = changes.map((change, index) => renderFileChangeEntry(change, index));
+  const hasBody = changeBlocks.some((block) => block.includes('\n'));
+
+  if (!hasBody) {
+    if (changeBlocks.length === 1) {
+      const headerOnly = normalizeMultiline(changeBlocks[0].replace(/^•\s*/, ''));
+      if (headerOnly) return headerOnly;
+    }
+    return summaryWithStatus;
+  }
+
+  if (changeBlocks.length === 1 && !status) {
+    return changeBlocks[0];
+  }
+
+  return `${summaryWithStatus}\n${changeBlocks.join('\n\n')}`;
+}
+
 function parseCodexLiveStatus(data: JsonRecord): string | null | undefined {
   const method = asString(data.method);
   if (!method) return undefined;
@@ -270,37 +454,10 @@ function parseCodexEvent(data: JsonRecord): ParsedEventMessage | null {
     }
 
     if (normalizedType === 'filechange') {
-      const changes = Array.isArray(item.changes) ? item.changes : [];
-      const status = asString(item.status);
-      const paths = changes
-        .map((change) => {
-          if (!isRecord(change)) return null;
-          return asString(change.path) || asString(change.filePath) || asString(change.file);
-        })
-        .filter((path): path is string => !!path && path.trim().length > 0);
-
-      let summary: string;
-      if (paths.length === 1) {
-        summary = `Edited \`${paths[0]}\``;
-      } else if (paths.length > 1) {
-        const shown = paths.slice(0, 2);
-        const remaining = paths.length - shown.length;
-        summary = remaining > 0
-          ? `Edited \`${shown.join('`, `')}\` +${remaining} files`
-          : `Edited \`${shown.join('`, `')}\``;
-      } else {
-        const count = changes.length;
-        summary = count > 0
-          ? `Edited ${count} file${count === 1 ? '' : 's'}`
-          : 'Edited files';
-      }
-
       return {
         role: 'assistant',
         messageType: 'tool',
-        content: status
-          ? `${summary} (${status})`
-          : summary,
+        content: buildFileChangeMessage(item),
         mode: 'new',
       };
     }

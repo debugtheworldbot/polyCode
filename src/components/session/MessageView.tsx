@@ -50,6 +50,76 @@ function hasImagePlaceholder(content: string): boolean {
   return content.split('\n').some((line) => /^\[Image:\s*(.+?)\]\s*$/.test(line));
 }
 
+function isCollapsibleEditToolMessage(content: string): boolean {
+  const normalized = content.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return false;
+  if (!/^•?\s*edited\b/i.test(normalized)) return false;
+  return normalized.includes('\n');
+}
+
+function splitToolEditMessage(content: string): { title: string; details: string | null } {
+  const normalized = content.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return { title: 'Edited files', details: null };
+
+  const lines = normalized.split('\n');
+  const firstLine = lines[0]?.trim() || 'Edited files';
+  const details = lines.slice(1).join('\n').trim();
+  return {
+    title: firstLine.replace(/^•\s*/, ''),
+    details: details || null,
+  };
+}
+
+function ToolEditDetails({ details }: { details: string }) {
+  return (
+    <div className="tool-edit-details-block">
+      {details.split('\n').map((line, index) => {
+        const trimmed = line.trimStart();
+        const lineClass = trimmed.startsWith('+')
+          ? 'added'
+          : trimmed.startsWith('-')
+            ? 'removed'
+            : trimmed.startsWith('@@') || trimmed.startsWith('•')
+              ? 'meta'
+              : 'context';
+        return (
+          <div key={`tool-edit-line-${index}`} className={`tool-edit-line ${lineClass}`}>
+            {line || ' '}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToolMessageContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!isCollapsibleEditToolMessage(content)) {
+    return <span style={{ opacity: 0.7 }}>{content}</span>;
+  }
+
+  const { title, details } = splitToolEditMessage(content);
+
+  return (
+    <div className="tool-edit-message">
+      <button
+        type="button"
+        className="tool-edit-toggle"
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+      >
+        <span className={`tool-edit-caret ${expanded ? 'expanded' : ''}`}>▸</span>
+        <span className="tool-edit-title">{title}</span>
+      </button>
+      {expanded && details && <ToolEditDetails details={details} />}
+      {expanded && !details && (
+        <div className="tool-edit-empty">No edit details were provided for this update.</div>
+      )}
+    </div>
+  );
+}
+
 function LocalImage({ path, alt }: { path: string; alt?: string }) {
   const [resolvedSrc, setResolvedSrc] = useState(convertFileSrc(path));
   const [fallbackTried, setFallbackTried] = useState(false);
@@ -106,7 +176,7 @@ function MessageBubble({ message, provider }: { message: ChatMessage; provider?:
   if (isTool) {
     return (
       <div className="message-bubble tool animate-fadeIn" style={{ animationDelay: '0.1s' }}>
-        <span style={{ opacity: 0.7 }}>{message.content}</span>
+        <ToolMessageContent content={message.content} />
       </div>
     );
   }
