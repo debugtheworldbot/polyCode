@@ -296,8 +296,9 @@ body {
   }
 }
 
-.session-refresh-icon.spinning {
+.spinning {
   animation: polycode-spin 1s linear infinite;
+  transform-origin: center;
 }
 
 @keyframes polycode-spin {
